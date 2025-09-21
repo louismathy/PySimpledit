@@ -30,6 +30,6 @@ echo.
 
 REM Start der App
 echo [Simpledit] Starte Editor ...
-python main.py
+python src/main.py
 
 pause
