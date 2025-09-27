@@ -5,7 +5,18 @@ from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtGui import QShortcut
 from PySide6.QtCore import Qt, QTimer
 from render_settings import RenderSettingsDialog
+from effects import EffectConfig, build_chain
+# Verfügbare Effekte für das UI (key -> Anzeigename)
+AVAILABLE_EFFECTS = {
+    "bw": "Black & White",
+    "invert": "Invert Colors",
+    "sepia": "Sepia Tone",
+    "brightness": "Brightness",
+    "contrast": "Contrast",
+    "mirror": "Mirror (Horizontal Flip)",
+}
 
+REVERSE_AVAILABLE_EFFECTS = {v: k for k, v in AVAILABLE_EFFECTS.items()}
 import vlc
 from moviepy import (
     VideoFileClip, AudioFileClip, ColorClip,
@@ -230,6 +241,48 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         la.addRow(self.btn_apply_audio)
         inspector.addTab(wa, "Audio")
 
+                # --- Effects inspector (per-clip) ---
+        we = QtWidgets.QWidget()
+        le = QtWidgets.QVBoxLayout(we)
+        le.setContentsMargins(8, 8, 8, 8)
+
+        # Oben: aktuelle Effekte (Liste in Reihenfolge)
+        self.list_effects = QtWidgets.QListWidget()
+        self.list_effects.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.list_effects.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
+        le.addWidget(QtWidgets.QLabel("Clip Effects (top → bottom):"))
+        le.addWidget(self.list_effects, 1)
+
+        # Mitte: Buttons Up / Down / Remove
+        row_btns = QtWidgets.QHBoxLayout()
+        self.btn_eff_up = QtWidgets.QPushButton("↑")
+        self.btn_eff_down = QtWidgets.QPushButton("↓")
+        self.btn_eff_remove = QtWidgets.QPushButton("Remove")
+        row_btns.addWidget(self.btn_eff_up)
+        row_btns.addWidget(self.btn_eff_down)
+        row_btns.addStretch(1)
+        row_btns.addWidget(self.btn_eff_remove)
+        le.addLayout(row_btns)
+
+        # Unten: Add-Combobox + Add-Button
+        row_add = QtWidgets.QHBoxLayout()
+        self.combo_eff_add = QtWidgets.QComboBox()
+        self.combo_eff_add.addItems(list(AVAILABLE_EFFECTS.values()))
+        self.btn_eff_add = QtWidgets.QPushButton("Add")
+        row_add.addWidget(self.combo_eff_add, 1)
+        row_add.addWidget(self.btn_eff_add)
+        le.addLayout(row_add)
+
+        inspector.addTab(we, "Effects")
+
+        # Signals
+        self.btn_eff_add.clicked.connect(self.on_effect_add)
+        self.btn_eff_remove.clicked.connect(self.on_effect_remove)
+        self.btn_eff_up.clicked.connect(self.on_effect_move_up)
+        self.btn_eff_down.clicked.connect(self.on_effect_move_down)
+        self.list_effects.itemSelectionChanged.connect(self._update_effect_buttons_enabled)
+
+
         splitter.addWidget(left_panel)
 
         # Center panel (video preview + timeline)
@@ -447,6 +500,92 @@ class EditorMainWindow(QtWidgets.QMainWindow):
     def _gi_key(self, c: ClipItem) -> int: return id(c)
     def _agi_key(self, a: AudioItem) -> int: return id(a)
 
+
+    def _current_clip_or_none(self) -> Optional[ClipItem]:
+        return self.current_clip()
+
+    def _refresh_effects_ui(self):
+        """Liste im Effects-Tab mit dem aktuell selektierten Clip synchronisieren."""
+        c = self._current_clip_or_none()
+        self.list_effects.clear()
+        if not c:
+            self._update_effect_buttons_enabled()
+            return
+
+        # c.effects ist eine Liste von Dicts: {"type": "...", "params": {...}}
+        for ec in (c.effects or []):
+            t = ec.get("type", "")
+            label = AVAILABLE_EFFECTS.get(t, f"Unknown ({t})")
+            item = QtWidgets.QListWidgetItem(label)
+            item.setData(Qt.UserRole, ec)  # Original-Dict mitgeben
+            self.list_effects.addItem(item)
+
+        self._update_effect_buttons_enabled()
+
+    def _update_effect_buttons_enabled(self):
+        has_sel = len(self.list_effects.selectedIndexes()) == 1
+        self.btn_eff_remove.setEnabled(has_sel)
+        self.btn_eff_up.setEnabled(has_sel and self.list_effects.currentRow() > 0)
+        self.btn_eff_down.setEnabled(
+            has_sel and 0 <= self.list_effects.currentRow() < (self.list_effects.count() - 1)
+        )
+
+    def _apply_effects_preview_refresh(self):
+        """Nach Effektänderung die Preview neu triggern."""
+        c = self._clip_at_time(self.current_time)
+        if c:
+            local = c.trim_in + (self.current_time - c.start_time)
+            self._request_frame(c.path, local)
+        # Wenn gerade Playing → Audio bleibt wie ist; wir ändern nur das Bild.
+
+    # --------- Actions: Add / Remove / Reorder ----------
+
+    def on_effect_add(self):
+        c = self._current_clip_or_none()
+        if not c:
+            return
+        eff_label = self.combo_eff_add.currentText().strip()
+        eff_key = REVERSE_AVAILABLE_EFFECTS.get(eff_label)
+        if not eff_key:
+            return
+        # Default-Params leer; bei parametrisierbaren Effekten hier Defaults setzen
+        c.effects = (c.effects or []) + [{"type": eff_key, "params": {}}]
+        self._refresh_effects_ui()
+        self._apply_effects_preview_refresh()
+
+    def on_effect_remove(self):
+        c = self._current_clip_or_none()
+        if not c:
+            return
+        row = self.list_effects.currentRow()
+        if 0 <= row < (len(c.effects or [])):
+            del c.effects[row]
+            self._refresh_effects_ui()
+            self._apply_effects_preview_refresh()
+
+    def on_effect_move_up(self):
+        c = self._current_clip_or_none()
+        if not c:
+            return
+        row = self.list_effects.currentRow()
+        if 0 < row < len(c.effects or []):
+            c.effects[row - 1], c.effects[row] = c.effects[row], c.effects[row - 1]
+            self._refresh_effects_ui()
+            # alte Auswahl wiederherstellen
+            self.list_effects.setCurrentRow(row - 1)
+            self._apply_effects_preview_refresh()
+
+    def on_effect_move_down(self):
+        c = self._current_clip_or_none()
+        if not c:
+            return
+        row = self.list_effects.currentRow()
+        if 0 <= row < len(c.effects or []) - 1:
+            c.effects[row + 1], c.effects[row] = c.effects[row], c.effects[row + 1]
+            self._refresh_effects_ui()
+            self.list_effects.setCurrentRow(row + 1)
+            self._apply_effects_preview_refresh()
+
     # ----------------- Lists/UI -----------------
     def current_clip(self) -> Optional[ClipItem]:
         row = self.list_clips.currentRow()
@@ -491,6 +630,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.refresh_clip_list_labels(); self.refresh_audio_list_labels(); self._rebuild_sorted()
             self.statusBar().showMessage("Neues Projekt", 3000)
             self._on_timeline_changed(hard=True)
+            self._refresh_effects_ui()
+
 
     def on_open_project(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Projekt öffnen", "", "Simpledit (*.sedit.json)")
@@ -611,7 +752,9 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.lbl_path.setText(c.path); self.lbl_duration.setText(f"{c.duration:.3f}s")
         self.spin_trim_in.setMaximum(c.duration); self.spin_trim_out.setMaximum(c.duration)
         self.spin_trim_in.setValue(c.trim_in); self.spin_trim_out.setValue(c.safe_out()); self.spin_start.setValue(c.start_time)
+        
         self._request_frame(c.path, c.trim_in)
+        self._refresh_effects_ui()
 
     def on_apply_from_inspector(self):
         c = self.current_clip()
@@ -624,6 +767,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             return
         c.trim_in, c.trim_out, c.start_time = ti, to, max(0.0, st)
         gi = self.graphics_by_clip.get(self._gi_key(c))
+        self._refresh_effects_ui()
         if gi:
             gi.update_geometry(); gi._refresh_label()
         self.refresh_clip_list_labels()
@@ -665,6 +809,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if gi: self.scene.removeItem(gi)
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=True)
+        self._refresh_effects_ui()
+
 
     def on_clip_moved(self, clip: ClipItem):
         self.refresh_clip_list_labels()
@@ -771,8 +917,21 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.frame_thread.request(path, t_local, self.video_widget.width(), self.video_widget.height(), self.preview_height)
 
     def _on_frame_ready(self, qimg: QtGui.QImage):
-        pix = QtGui.QPixmap.fromImage(qimg)
-        if isinstance(self.video_widget, QtWidgets.QLabel): self.video_widget.setPixmap(pix)
+        img = qimg
+
+        # Aktiven Clip ermitteln
+        c = self._clip_at_time(self.current_time)
+        if c and getattr(c, "effects", None):
+            from effects import apply_chain_qimage
+            try:
+                img = apply_chain_qimage(img, c.effects)  # <- WICHTIG: Rückgabe zuweisen
+            except Exception as e:
+                print("[effects] preview error:", e)
+
+        pix = QtGui.QPixmap.fromImage(img)
+        if isinstance(self.video_widget, QtWidgets.QLabel):
+            self.video_widget.setPixmap(pix)
+
 
     def _on_frame_error(self, msg: str):
         if isinstance(self.video_widget, QtWidgets.QLabel):
@@ -911,6 +1070,14 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 t_cursor += gap
             base = VideoFileClip(c.path)
             sub = make_subclip(base, c.trim_in, c.safe_out())
+            # NEW: apply per-clip effects (MoviePy)
+            try:
+                effect_cfgs = [EffectConfig(**ec) for ec in (getattr(c, "effects", []) or [])]
+                for eff in build_chain(effect_cfgs):
+                    sub = eff.apply_moviepy(sub)
+            except Exception as _e:
+                print(_e)
+                pass
             v_segments.append(sub)
             t_cursor += c.trimmed_length()
 

@@ -1,43 +1,38 @@
-from dataclasses import dataclass
-from typing import Optional
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Optional, List
 
-APP_NAME = "Simpledit"
+# Optional: wenn du Effekte pro Clip speichern willst
+try:
+    from effects import EffectConfig
+except Exception:
+    # Fallback, falls effects noch nicht importierbar ist
+    @dataclass
+    class EffectConfig:  # type: ignore
+        type: str
+        params: dict = field(default_factory=dict)
 
 
 @dataclass
 class ClipItem:
-    """
-    Repräsentiert ein Video-Clipsegment auf der Timeline.
-    - path: Dateipfad
-    - duration: volle Mediendauer in Sekunden
-    - trim_in/trim_out: lokaler In/Out-Punkt relativ zum Medienanfang
-    - start_time: Startzeit auf der Timeline (Sekunden)
-    """
     path: str
     duration: float
     trim_in: float = 0.0
     trim_out: Optional[float] = None
     start_time: float = 0.0
+    effects: List[EffectConfig] = field(default_factory=list)
 
     def safe_out(self) -> float:
-        """Out-Punkt (falls None → volle Dauer)."""
-        return self.trim_out if self.trim_out is not None else self.duration
+        """Return the current trim-out capped by duration."""
+        return min(self.duration, self.trim_out if self.trim_out is not None else self.duration)
 
     def trimmed_length(self) -> float:
-        """Aktuelle Segmentlänge = trim_out - trim_in (min. 0)."""
+        """Return visible length (out - in), clamped to >= 0."""
         return max(0.0, self.safe_out() - self.trim_in)
 
 
 @dataclass
 class AudioItem:
-    """
-    Repräsentiert ein Audio-Segment auf der Timeline.
-    - path: Dateipfad
-    - duration: volle Mediendauer in Sekunden
-    - trim_in/trim_out: lokaler In/Out-Punkt relativ zum Medienanfang
-    - start_time: Startzeit auf der Timeline (Sekunden)
-    - gain_db: Pegeländerung in dB (−60 … +24 dB typischer Bereich)
-    """
     path: str
     duration: float
     trim_in: float = 0.0
@@ -46,9 +41,7 @@ class AudioItem:
     gain_db: float = 0.0
 
     def safe_out(self) -> float:
-        """Out-Punkt (falls None → volle Dauer)."""
-        return self.trim_out if self.trim_out is not None else self.duration
+        return min(self.duration, self.trim_out if self.trim_out is not None else self.duration)
 
     def trimmed_length(self) -> float:
-        """Aktuelle Segmentlänge = trim_out - trim_in (min. 0)."""
         return max(0.0, self.safe_out() - self.trim_in)
