@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 import math
 
 from PySide6 import QtWidgets, QtGui, QtCore
@@ -23,7 +23,6 @@ class TimeRuler(QtWidgets.QGraphicsItem):
         self.setZValue(100)
 
     def boundingRect(self) -> QtCore.QRectF:
-        # „Unendlich“ breit; der Viewport clipped das schon
         return QtCore.QRectF(0, 0, 1e7, RULER_H)
 
     def paint(self, p: QtGui.QPainter, option, widget=None):
@@ -45,7 +44,6 @@ class TimeRuler(QtWidgets.QGraphicsItem):
         start_s = max(0.0, rect.left() / self.pps)
         end_s = max(0.0, rect.right() / self.pps)
 
-        # Notbremse: nicht zu viele Ticks, wenn extrem gezoomt
         max_ticks = 220
         visible_seconds = end_s - start_s
         est_ticks = int(visible_seconds / ((10.0 / self.pps) if self.pps > 0 else 1))
@@ -53,17 +51,16 @@ class TimeRuler(QtWidgets.QGraphicsItem):
             major *= math.ceil(est_ticks / max_ticks)
             minor = major / 5
 
-        # Minor-Ticks
+        # Minor ticks
         x0 = math.floor(start_s / minor) * minor
         t = x0
         while t <= end_s:
             x = t * self.pps
-            # Kürzere Minor-Ticks zwischen den Majors
             h = 6 if (abs((t / major) - round(t / major)) > 1e-6) else 10
             p.drawLine(QtCore.QLineF(x, RULER_H - h, x, RULER_H))
             t += minor
 
-        # Major-Labels
+        # Major labels
         p.setPen(QtGui.QColor(200, 200, 205))
         first_major = math.floor(start_s / major) * major
         t = first_major
@@ -95,6 +92,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         self.model = clip
         self.pps = pps
         self._rect = QRectF()
+        self._dragging = False
 
         self.setFlags(
             QtWidgets.QGraphicsItem.ItemIsSelectable
@@ -140,12 +138,17 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
+        self._dragging = True
         return super().mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.clear_snap_targets()
+        if self._dragging:
+            self._dragging = False
+            self.model.start_time = max(0.0, self.pos().x() / self.pps)
+            self.moved.emit(self.model)
         return super().mouseReleaseEvent(e)
 
     def _snap_x(self, x: float) -> float:
@@ -155,7 +158,6 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
             if abs(x - t) <= self.snap_eps:
                 return t
 
-        # Grid: ca. alle 0.1s ein Soft-Snap
         grid = 0.1 * self.pps
         if grid > 1:
             xg = round(x / grid) * grid
@@ -168,9 +170,6 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
             new_pos: QPointF = value
             new_pos.setY(0)
             return QPointF(self._snap_x(new_pos.x()), 0)
-        elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-            self.model.start_time = max(0.0, self.pos().x() / self.pps)
-            self.moved.emit(self.model)
         return super().itemChange(change, value)
 
 
@@ -182,6 +181,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         self.model = clip
         self.pps = pps
         self._rect = QRectF()
+        self._dragging = False
 
         self.setFlags(
             QtWidgets.QGraphicsItem.ItemIsSelectable
@@ -229,12 +229,17 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
+        self._dragging = True
         return super().mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.clear_snap_targets()
+        if self._dragging:
+            self._dragging = False
+            self.model.start_time = max(0.0, self.pos().x() / self.pps)
+            self.moved.emit(self.model)
         return super().mouseReleaseEvent(e)
 
     def _snap_x(self, x: float) -> float:
@@ -256,9 +261,6 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
             new_pos: QPointF = value
             new_pos.setY(0)
             return QPointF(self._snap_x(new_pos.x()), 0)
-        elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-            self.model.start_time = max(0.0, self.pos().x() / self.pps)
-            self.moved.emit(self.model)
         return super().itemChange(change, value)
 
 
@@ -338,7 +340,6 @@ class TimelineView(QtWidgets.QGraphicsView):
 
         self.scene().setItemIndexMethod(QtWidgets.QGraphicsScene.NoIndex)
 
-        # Hardware-beschleunigte Oberfläche, wenn verfügbar
         try:
             from PySide6.QtOpenGLWidgets import QOpenGLWidget
             self.setViewport(QOpenGLWidget())
@@ -371,9 +372,7 @@ class TimelineView(QtWidgets.QGraphicsView):
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + int(dx))
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        # Klick in die Ruler-Zeile: Playhead setzen
         if e.button() == Qt.LeftButton and e.position().y() <= RULER_H + 8:
-            
             p = self.mapToScene(e.pos())
             t = max(0.0, p.x() / self.scene().pps)
             self.time_changed.emit(t)

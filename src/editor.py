@@ -12,7 +12,7 @@ from moviepy import (
     concatenate_videoclips, CompositeAudioClip
 )
 
-# Aus deinen neuen Modulen (diese Dateien bekommst du gleich im nächsten Schritt)
+# Aus deinen Modulen
 from models import ClipItem, AudioItem
 from timeline import TimelineScene, TimelineView
 from preview import FramePreviewer
@@ -38,7 +38,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.current_time: float = 0.0
         self.playing = False
         self.audio_enabled = True
-        self.preview_height = 360   # Preview-Höhe (Auto/720/540/360/240/144)
+        self.preview_height = 360   # Preview-Höhe
         self.preview_fps = 30
         self.render_settings = {
             "resolution": "Auto",
@@ -48,6 +48,16 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             "audio_bitrate": "192k",
         }
 
+        # ---------- Playback/Sync State ----------
+        # Welche Pfade sind aktuell aktiv? (wird für Set-Vergleich genutzt)
+        self._active_paths: set[str] = set()
+        # Letzte "gesetzte" Zeit pro Pfad (ms), um unnötige Seeks zu vermeiden
+        self._last_seek_by_path: Dict[str, int] = {}
+        # Rate-Limit per Pfad (Wallclock ms)
+        self._last_seek_wall_ms: Dict[str, int] = {}
+        # Schwellwerte für Sync-Ruhe
+        self._seek_guard_ms = 350    # erst seeken, wenn Delta größer als das ist
+        self._seek_min_interval_ms = 1200  # min. Zeit zwischen zwei Seeks je Pfad
 
         # Shortcuts
         QShortcut(Qt.Key_Space, self, activated=self.on_toggle_play)
@@ -57,7 +67,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         QShortcut(Qt.Key_S, self, activated=self.split_at_playhead)
 
         # ----- VLC AudioEngine -----
-        self.vlc_instance = vlc.Instance("--no-xlib --novideo")  # nur Audio
+        # Ruhiger/robuster starten (weniger Console-Noise)
+        self.vlc_instance = vlc.Instance("--no-xlib", "--novideo", "--quiet", "--file-caching=150")
         self.audio_players: Dict[str, vlc.MediaPlayer] = {}
         self.video_players: Dict[str, vlc.MediaPlayer] = {}
 
@@ -185,7 +196,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.action_export = tb.addAction("Export")
         self.action_export.triggered.connect(self.on_export)
 
-
         # Layouts
         splitter = QtWidgets.QSplitter(Qt.Horizontal)
 
@@ -265,33 +275,131 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 p.stop()
             except:
                 pass
-    def _sync_audio_playing(self):
-        if not self.audio_enabled or not self.playing:
-            return
+        self._active_paths.clear()
 
-        # --- Video-Clip-Audio ---
+    # ----------------- Zielzustand bestimmen & anwenden -----------------
+    def _recompute_active_targets(self, t: float) -> Dict[str, int]:
+        """
+        Liefert {path: offset_ms} für alle Quellen (Video-Audio + Extra-Audio),
+        die zum Zeitpunkt t aktiv sein sollen.
+        """
+        targets: Dict[str, int] = {}
+
         for c in self.clips:
-            p = self.video_players.get(c.path)
-            if not p:
-                continue
-            if self.current_time < c.start_time or self.current_time >= c.start_time + c.trimmed_length():
-                try:
-                    p.stop()
-                except:
-                    pass
+            if c.start_time <= t < c.start_time + c.trimmed_length():
+                off_ms = int(((t - c.start_time) + c.trim_in) * 1000)
+                targets[c.path] = off_ms
 
-        # --- Extra-Audio-Tracks ---
         for a in self.audios:
-            p = self.audio_players.get(a.path)
-            if not p:
+            if a.start_time <= t < a.start_time + a.trimmed_length():
+                off_ms = int(((t - a.start_time) + a.trim_in) * 1000)
+                targets[a.path] = off_ms
+
+        return targets
+
+    def _need_seek(self, path: str, desired_ms: int) -> bool:
+        """
+        Entscheidet, ob wir für 'path' wirklich einen neuen seek auslösen müssen,
+        basierend auf letzter gesetzter Zeit & einem Minimalintervall.
+        """
+        now_ms = QtCore.QTime.currentTime().msecsSinceStartOfDay()
+        last_wall = self._last_seek_wall_ms.get(path, -10_000)
+        if now_ms - last_wall < self._seek_min_interval_ms:
+            return False
+
+        last_set = self._last_seek_by_path.get(path, None)
+        if last_set is None:
+            return True
+        return abs(desired_ms - last_set) > self._seek_guard_ms
+
+    def _seek_player(self, player: vlc.MediaPlayer, path: str, desired_ms: int):
+        try:
+            # VLC braucht play() bevor set_time() zuverlässig wirkt
+            player.play()
+            QtCore.QTimer.singleShot(
+                60, lambda pl=player, p=path, ms=desired_ms: self._finish_seek(pl, p, ms)
+            )
+        except:
+            pass
+
+    def _finish_seek(self, player: vlc.MediaPlayer, path: str, ms: int):
+        try:
+            player.set_time(ms)
+            self._last_seek_by_path[path] = ms
+            self._last_seek_wall_ms[path] = QtCore.QTime.currentTime().msecsSinceStartOfDay()
+        except:
+            pass
+
+    def _apply_targets(self, targets: Dict[str, int], force: bool = False):
+        """
+        Wendet den Zielzustand an:
+        - stoppt Player, die nicht mehr aktiv sind
+        - startet/seekt Player, die aktiv sein müssen
+        - rate-limited & mit Seek-Grenze
+        """
+        target_paths = set(targets.keys())
+
+        # Stoppe alles, was nicht mehr aktiv ist
+        to_stop = self._active_paths - target_paths
+        for path in to_stop:
+            pl = self.video_players.get(path) or self.audio_players.get(path)
+            if pl:
+                try: pl.stop()
+                except: pass
+
+        # Starte/Seeke, was aktiv sein soll
+        for path in target_paths:
+            # Player besorgen
+            pl = self.video_players.get(path)
+            if pl is None:
+                ap = self.audio_players.get(path)
+                if ap is None:
+                    # herausfinden ob es ein Video- oder Audio-Item ist
+                    clip = next((c for c in self.clips if c.path == path), None)
+                    if clip is not None:
+                        pl = self._ensure_video_player(clip)
+                    else:
+                        aud = next((a for a in self.audios if a.path == path), None)
+                        if aud is not None:
+                            pl = self._ensure_audio_player(aud)
+                else:
+                    pl = ap
+
+            if not pl:
                 continue
-            if self.current_time < a.start_time or self.current_time >= a.start_time + a.trimmed_length():
+
+            desired_ms = targets[path]
+
+            # Start-/Seek-Entscheidung
+            try:
+                playing = pl.is_playing()
+            except:
+                playing = False
+
+            if force:
                 try:
-                    p.stop()
+                    pl.stop()
                 except:
                     pass
+                self._seek_player(pl, path, desired_ms)
+            else:
+                if not playing:
+                    # Neu starten (z.B. wir sind in Clip "reingelaufen")
+                    self._seek_player(pl, path, desired_ms)
+                else:
+                    # Läuft schon → nur seeken, wenn sich's wirklich lohnt
+                    if self._need_seek(path, desired_ms):
+                        self._seek_player(pl, path, desired_ms)
 
+        # Merke den neuen Aktivsatz
+        self._active_paths = target_paths
 
+    # Praktischer Helper für alle Timeline-Änderungen
+    def _on_timeline_changed(self, hard: bool = True):
+        self._rebuild_sorted()
+        if self.playing and self.audio_enabled:
+            targets = self._recompute_active_targets(self.current_time)
+            self._apply_targets(targets, force=hard)
 
     # ----------------- Play/Stop -----------------
     def on_toggle_play(self):
@@ -308,24 +416,10 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             if self.playing:
                 self._last_tick_ns = time.perf_counter_ns()
                 self.play_timer.start()
-                if self.audio_enabled:
-                    # --- Video-Audio ---
-                    for c in self.clips:
-                        if c.start_time <= self.current_time < c.start_time + c.trimmed_length():
-                            p = self._ensure_video_player(c)
-                            p.stop()
-                            offset = (self.current_time - c.start_time) + c.trim_in
-                            p.play()
-                            QtCore.QTimer.singleShot(50, lambda pl=p, off=offset: pl.set_time(int(off * 1000)))
 
-                    # --- Audio-Tracks ---
-                    for a in self.audios:
-                        if a.start_time <= self.current_time < a.start_time + a.trimmed_length():
-                            p = self._ensure_audio_player(a)
-                            p.stop()
-                            offset = (self.current_time - a.start_time) + a.trim_in
-                            p.play()
-                            QtCore.QTimer.singleShot(50, lambda pl=p, off=offset: pl.set_time(int(off * 1000)))
+                if self.audio_enabled:
+                    targets = self._recompute_active_targets(self.current_time)
+                    self._apply_targets(targets, force=True)
             else:
                 self.play_timer.stop()
                 self._last_tick_ns = None
@@ -396,6 +490,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.project_path = None
             self.refresh_clip_list_labels(); self.refresh_audio_list_labels(); self._rebuild_sorted()
             self.statusBar().showMessage("Neues Projekt", 3000)
+            self._on_timeline_changed(hard=True)
 
     def on_open_project(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Projekt öffnen", "", "Simpledit (*.sedit.json)")
@@ -414,6 +509,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.refresh_clip_list_labels(); self.refresh_audio_list_labels()
             self.project_path = path; self._rebuild_sorted()
             self.statusBar().showMessage(f"Projekt geladen: {os.path.basename(path)}", 3000)
+            self._on_timeline_changed(hard=True)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Laden fehlgeschlagen", str(e))
 
@@ -451,7 +547,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             c = ClipItem(path=p, duration=dur, trim_in=0.0, trim_out=dur, start_time=last_end)
             last_end += c.trimmed_length(); self.clips.append(c)
             gi = self.scene.add_clip_item(c); gi.moved.connect(self.on_clip_moved); self.graphics_by_clip[self._gi_key(c)] = gi
-        self.refresh_clip_list_labels(); self._rebuild_sorted()
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
         if self.list_clips.currentRow() == -1 and self.clips: self.list_clips.setCurrentRow(0)
 
     def on_import_audio(self):
@@ -466,20 +563,44 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             a = AudioItem(path=p, duration=dur, trim_in=0.0, trim_out=dur, start_time=last_end, gain_db=0.0)
             last_end += a.trimmed_length(); self.audios.append(a)
             gi = self.scene.add_audio_item(a); gi.moved.connect(self.on_audio_moved); self.audio_graphics_by_clip[self._agi_key(a)] = gi
-        self.refresh_audio_list_labels(); self._rebuild_sorted()
+        self.refresh_audio_list_labels()
+        self._on_timeline_changed(hard=True)
         if self.list_audio.currentRow() == -1 and self.audios: self.list_audio.setCurrentRow(0)
 
     def on_remove(self):
         row = self.list_clips.currentRow()
         if 0 <= row < len(self.clips):
-            c = self.clips.pop(row); gi = self.graphics_by_clip.pop(self._gi_key(c), None)
+            c = self.clips.pop(row)
+            # Player dieses Clips stoppen & entsorgen
+            pl = self.video_players.pop(c.path, None)
+            if pl:
+                try: pl.stop()
+                except: pass
+            self._last_seek_by_path.pop(c.path, None)
+            self._last_seek_wall_ms.pop(c.path, None)
+
+            gi = self.graphics_by_clip.pop(self._gi_key(c), None)
             if gi: self.scene.removeItem(gi)
-            self.refresh_clip_list_labels(); self._rebuild_sorted(); return
+
+            self.refresh_clip_list_labels()
+            self._on_timeline_changed(hard=True)
+            return
+
         rowa = self.list_audio.currentRow()
         if 0 <= rowa < len(self.audios):
-            a = self.audios.pop(rowa); gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
+            a = self.audios.pop(rowa)
+            pl = self.audio_players.pop(a.path, None)
+            if pl:
+                try: pl.stop()
+                except: pass
+            self._last_seek_by_path.pop(a.path, None)
+            self._last_seek_wall_ms.pop(a.path, None)
+
+            gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
             if gi: self.scene.removeItem(gi)
-            self.refresh_audio_list_labels(); self._rebuild_sorted()
+
+            self.refresh_audio_list_labels()
+            self._on_timeline_changed(hard=True)
 
     def on_select_clip(self, row: int):
         if not (0 <= row < len(self.clips)):
@@ -494,8 +615,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
     def on_apply_from_inspector(self):
         c = self.current_clip()
-        if not c:
-            return
+        if not c: return
         ti = float(self.spin_trim_in.value())
         to = float(self.spin_trim_out.value())
         st = float(self.spin_start.value())
@@ -506,7 +626,9 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         gi = self.graphics_by_clip.get(self._gi_key(c))
         if gi:
             gi.update_geometry(); gi._refresh_label()
-        self._rebuild_sorted(); self.refresh_clip_list_labels(); self._request_frame(c.path, c.trim_in)
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
+        self._request_frame(c.path, c.trim_in)
 
     def on_select_audio(self, row: int):
         if not (0 <= row < len(self.audios)):
@@ -521,8 +643,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
     def on_apply_audio(self):
         a = self.current_audio()
-        if not a:
-            return
+        if not a: return
         ti = float(self.spin_ain.value())
         to = float(self.spin_aout.value())
         st = float(self.spin_astart.value())
@@ -533,23 +654,25 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         gi = self.audio_graphics_by_clip.get(self._agi_key(a))
         if gi:
             gi.update_geometry(); gi._refresh_label()
-        self._rebuild_sorted(); self.refresh_audio_list_labels()
+        self.refresh_audio_list_labels()
+        self._on_timeline_changed(hard=True)
 
     def on_remove_audio(self):
         row = self.list_audio.currentRow()
-        if not (0 <= row < len(self.audios)):
-            return
+        if not (0 <= row < len(self.audios)): return
         a = self.audios.pop(row)
         gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
-        if gi:
-            self.scene.removeItem(gi)
-        self.refresh_audio_list_labels(); self._rebuild_sorted()
+        if gi: self.scene.removeItem(gi)
+        self.refresh_audio_list_labels()
+        self._on_timeline_changed(hard=True)
 
     def on_clip_moved(self, clip: ClipItem):
-        self._rebuild_sorted(); self.refresh_clip_list_labels()
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=False)
 
     def on_audio_moved(self, audio: AudioItem):
-        self._rebuild_sorted(); self.refresh_audio_list_labels()
+        self.refresh_audio_list_labels()
+        self._on_timeline_changed(hard=False)
 
     # ----------------- preview quality -----------------
     def on_preview_quality_changed(self, text: str):
@@ -559,6 +682,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if c:
             local = c.trim_in + (self.current_time - c.start_time)
             self._request_frame(c.path, local)
+
     def on_preview_fps_changed(self, text: str):
         try:
             self.preview_fps = int(text)
@@ -573,6 +697,10 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Audio {'aktiv' if checked else 'ausgeschaltet'}", 2000)
         if not checked:
             self._stop_all_audio()
+        else:
+            if self.playing:
+                targets = self._recompute_active_targets(self.current_time)
+                self._apply_targets(targets, force=True)
 
     def _tick_playback(self):
         now_ns = time.perf_counter_ns()
@@ -585,10 +713,12 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             dt = 0
         self.seek(self.current_time + dt, from_player=True)
 
-        # --- Audio stoppen wenn Trim-Out überschritten ---
-        self._sync_audio_playing()
-
-
+        # Nur wenn playing & audio_enabled → evtl. Set-Änderungen anwenden
+        if self.playing and self.audio_enabled:
+            targets = self._recompute_active_targets(self.current_time)
+            # Wenn sich der aktive Satz ändert → force, sonst NICHT dauernd seeken
+            changed = set(targets.keys()) != self._active_paths
+            self._apply_targets(targets, force=changed)
 
     def _clip_at_time(self, t: float) -> Optional[ClipItem]:
         if not getattr(self, "_sorted_by_start", None): return None
@@ -618,16 +748,12 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
         c = self._clip_at_time(self.current_time)
         need_preview = False
-
         if not from_player:
-            # Bei User-Seeks sofort ein Bild holen
             need_preview = True
         else:
-            # Bei Player-Ticks nur alle ~80ms neues Bild
-            interval = int(1000 / self.preview_fps)  # ms pro Frame
+            interval = int(1000 / self.preview_fps)
             if now_ms - self._last_preview_at_ms >= interval:
                 need_preview = True
-
 
         if c and need_preview:
             local = c.trim_in + (self.current_time - c.start_time)
@@ -635,33 +761,12 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self._last_preview_at_ms = now_ms
 
         # --- Audio ---
-        if self.playing and self.audio_enabled and not from_player:
-            self._stop_all_audio()
+        if self.playing and self.audio_enabled:
+            targets = self._recompute_active_targets(self.current_time)
+            # Bei User-Seek (from_player=False) → force neu setzen
+            self._apply_targets(targets, force=not from_player)
 
-            # Video-Audio
-            for c in self.clips:
-                if c.start_time <= self.current_time < c.start_time + c.trimmed_length():
-                    p = self._ensure_video_player(c)
-                    p.stop()
-                    offset = (self.current_time - c.start_time) + c.trim_in
-                    p.play()
-                    QtCore.QTimer.singleShot(
-                        50, lambda pl=p, off=offset: pl.set_time(int(off * 1000))
-                    )
-
-            # Audio-Tracks
-            for a in self.audios:
-                if a.start_time <= self.current_time < a.start_time + a.trimmed_length():
-                    p = self._ensure_audio_player(a)
-                    p.stop()
-                    offset = (self.current_time - a.start_time) + a.trim_in
-                    p.play()
-                    QtCore.QTimer.singleShot(
-                        50, lambda pl=p, off=offset: pl.set_time(int(off * 1000))
-                    )
-
-
-
+    # ----------------- Frame thread hooks -----------------
     def _request_frame(self, path: str, t_local: float):
         self.frame_thread.request(path, t_local, self.video_widget.width(), self.video_widget.height(), self.preview_height)
 
@@ -673,6 +778,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if isinstance(self.video_widget, QtWidgets.QLabel):
             self.video_widget.setText(f"Frame konnte nicht geladen werden:\n{msg}")
 
+    # ----------------- Edit Ops -----------------
     def mark_in(self):
         c = self.current_clip()
         if not c: return
@@ -683,7 +789,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         gi = self.graphics_by_clip.get(self._gi_key(c))
         if gi:
             gi.update_geometry(); gi._refresh_label()
-        self._rebuild_sorted(); self.refresh_clip_list_labels()
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
 
     def mark_out(self):
         c = self.current_clip()
@@ -695,7 +802,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         gi = self.graphics_by_clip.get(self._gi_key(c))
         if gi:
             gi.update_geometry(); gi._refresh_label()
-        self._rebuild_sorted(); self.refresh_clip_list_labels()
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
 
     def split_at_playhead(self):
         t = self.current_time
@@ -705,26 +813,31 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             if c.trim_in + eps < local < c.safe_out() - eps:
                 old_out = c.safe_out(); c.trim_out = local
                 new_c = ClipItem(path=c.path, duration=c.duration, trim_in=local, trim_out=old_out, start_time=t)
-                self.clips.append(new_c); gi = self.scene.add_clip_item(new_c); gi.moved.connect(self.on_clip_moved)
+                self.clips.append(new_c)
+                gi = self.scene.add_clip_item(new_c); gi.moved.connect(self.on_clip_moved)
                 self.graphics_by_clip[self._gi_key(new_c)] = gi
                 gi_left = self.graphics_by_clip.get(self._gi_key(c))
                 if gi_left:
                     gi_left.update_geometry(); gi_left._refresh_label()
                 gi.update_geometry(); gi._refresh_label()
-                self._rebuild_sorted(); self.refresh_clip_list_labels(); return
+                self.refresh_clip_list_labels()
+                self._on_timeline_changed(hard=True)
+                return
         a = self._audio_at_time(t)
         if a:
             local = a.trim_in + (t - a.start_time); eps = 1e-4
             if a.trim_in + eps < local < a.safe_out() - eps:
                 old_out = a.safe_out(); a.trim_out = local
                 new_a = AudioItem(path=a.path, duration=a.duration, trim_in=local, trim_out=old_out, start_time=t, gain_db=a.gain_db)
-                self.audios.append(new_a); gi = self.scene.add_audio_item(new_a); gi.moved.connect(self.on_audio_moved)
+                self.audios.append(new_a)
+                gi = self.scene.add_audio_item(new_a); gi.moved.connect(self.on_audio_moved)
                 self.audio_graphics_by_clip[self._agi_key(new_a)] = gi
                 gi_left = self.audio_graphics_by_clip.get(self._agi_key(a))
                 if gi_left:
                     gi_left.update_geometry(); gi_left._refresh_label()
                 gi.update_geometry(); gi._refresh_label()
-                self._rebuild_sorted(); self.refresh_audio_list_labels()
+                self.refresh_audio_list_labels()
+                self._on_timeline_changed(hard=True)
 
     def timeline_length(self) -> float:
         end_v = max([c.start_time + c.trimmed_length() for c in self.clips], default=0.0)
@@ -732,12 +845,12 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         return max(end_v, end_a)
 
     # --------------- Export ---------------
-
     def on_open_render_settings(self):
         dlg = RenderSettingsDialog(self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.render_settings = dlg.get_settings()
             self.statusBar().showMessage(f"Render settings updated: {self.render_settings}", 3000)
+
     def _target_resolution(self, setting: str, default=(1280, 720)):
         mapping = {
             "720p": (1280, 720),
@@ -746,7 +859,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             "4K": (3840, 2160),
         }
         return mapping.get(setting, default)
-
 
     def on_export(self):
         if not self.clips and not self.audios:
@@ -787,7 +899,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Export-Fehler", str(e))
-
 
     def _render_moviepy_sequence(self):
         ordered_v = self._sorted_by_start
@@ -833,4 +944,3 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             video = video.resized(new_size=(target_w, target_h))
 
         return video
-
