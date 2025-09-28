@@ -25,7 +25,7 @@ from moviepy import (
 
 # Aus deinen Modulen
 from models import ClipItem, AudioItem
-from timeline import TimelineScene, TimelineView
+from timeline import TimelineScene, TimelineView, ClipGraphicsItem, AudioGraphicsItem
 from preview import FramePreviewer
 from utils import (
     fmt_time, make_subclip, make_audio_subclip,
@@ -89,6 +89,8 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.scene = TimelineScene(self.pps)
         self.timeline = TimelineView(self.scene)
         self.timeline.time_changed.connect(self.seek)
+        self.scene.selectionChanged.connect(self._on_scene_selection_changed)
+
 
         # Frame preview
         self.video_widget = QtWidgets.QLabel("Frame Preview")
@@ -458,7 +460,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
     def on_toggle_play(self):
         try:
             has_anything = bool(self._clip_at_time(self.current_time) or self._audio_at_time(self.current_time))
-            if not has_anything:
+            if not self.playing and not has_anything:
                 self.statusBar().showMessage("Nix zum Abspielen an dieser Stelle.", 2500)
                 self.action_play.setText("▶︎")
                 return
@@ -598,20 +600,35 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if 0 <= row < len(self.audios):
             return self.audios[row]
         return None
-
     def refresh_clip_list_labels(self):
+        # aktuelle Auswahl merken
+        selected = self.current_clip()
+
+        self.list_clips.blockSignals(True)
         self.list_clips.clear()
         for c in self.clips:
             self.list_clips.addItem(
                 f"{os.path.basename(c.path)}  t={c.start_time:.2f}s  [{c.trim_in:.2f}–{c.safe_out():.2f}s]"
             )
+        self.list_clips.blockSignals(False)
+
+        # Auswahl wiederherstellen
+        if selected and selected in self.clips:
+            self.list_clips.setCurrentRow(self.clips.index(selected))
 
     def refresh_audio_list_labels(self):
+        selected = self.current_audio()
+
+        self.list_audio.blockSignals(True)
         self.list_audio.clear()
         for a in self.audios:
             self.list_audio.addItem(
                 f"{os.path.basename(a.path)}  t={a.start_time:.2f}s  [{a.trim_in:.2f}–{a.safe_out():.2f}s]  {a.gain_db:+.1f} dB"
             )
+        self.list_audio.blockSignals(False)
+
+        if selected and selected in self.audios:
+            self.list_audio.setCurrentRow(self.audios.index(selected))
 
     def _rebuild_sorted(self):
         self._sorted_by_start = sorted(self.clips, key=lambda c: c.start_time)
@@ -644,9 +661,17 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.graphics_by_clip.clear(); self.audio_graphics_by_clip.clear()
             self.scene.clear(); self.scene = TimelineScene(self.pps); self.timeline.setScene(self.scene)
             for c in self.clips:
-                gi = self.scene.add_clip_item(c); gi.moved.connect(self.on_clip_moved); self.graphics_by_clip[self._gi_key(c)] = gi
+                gi = self.scene.add_clip_item(c)
+                gi.moved.connect(self.on_clip_moved)
+               # gi.clicked.connect(lambda clip=c: self._select_clip_from_timeline(clip))
+                self.graphics_by_clip[self._gi_key(c)] = gi
+
             for a in self.audios:
-                gi = self.scene.add_audio_item(a); gi.moved.connect(self.on_audio_moved); self.audio_graphics_by_clip[self._agi_key(a)] = gi
+                gi = self.scene.add_audio_item(a)
+                gi.moved.connect(self.on_audio_moved)
+               # gi.clicked.connect(lambda audio=a: self._select_audio_from_timeline(audio))
+                self.audio_graphics_by_clip[self._agi_key(a)] = gi
+
             self.refresh_clip_list_labels(); self.refresh_audio_list_labels()
             self.project_path = path; self._rebuild_sorted()
             self.statusBar().showMessage(f"Projekt geladen: {os.path.basename(path)}", 3000)
@@ -687,7 +712,11 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.critical(self, "Fehler beim Lesen", f"{p}\n\n{e}"); continue
             c = ClipItem(path=p, duration=dur, trim_in=0.0, trim_out=dur, start_time=last_end)
             last_end += c.trimmed_length(); self.clips.append(c)
-            gi = self.scene.add_clip_item(c); gi.moved.connect(self.on_clip_moved); self.graphics_by_clip[self._gi_key(c)] = gi
+            gi = self.scene.add_clip_item(c)
+            gi.moved.connect(self.on_clip_moved)
+          #  gi.clicked.connect(lambda clip=c: self._select_clip_from_timeline(clip))
+            self.graphics_by_clip[self._gi_key(c)] = gi
+
         self.refresh_clip_list_labels()
         self._on_timeline_changed(hard=True)
         if self.list_clips.currentRow() == -1 and self.clips: self.list_clips.setCurrentRow(0)
@@ -703,7 +732,11 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.critical(self, "Fehler beim Lesen (Audio)", f"{p}\n\n{e}"); continue
             a = AudioItem(path=p, duration=dur, trim_in=0.0, trim_out=dur, start_time=last_end, gain_db=0.0)
             last_end += a.trimmed_length(); self.audios.append(a)
-            gi = self.scene.add_audio_item(a); gi.moved.connect(self.on_audio_moved); self.audio_graphics_by_clip[self._agi_key(a)] = gi
+        gi = self.scene.add_audio_item(a)
+        gi.moved.connect(self.on_audio_moved)
+      #  gi.clicked.connect(lambda audio=a: self._select_audio_from_timeline(audio))
+        self.audio_graphics_by_clip[self._agi_key(a)] = gi
+
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=True)
         if self.list_audio.currentRow() == -1 and self.audios: self.list_audio.setCurrentRow(0)
@@ -755,6 +788,24 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         
         self._request_frame(c.path, c.trim_in)
         self._refresh_effects_ui()
+    def _select_clip_from_timeline(self, clip: ClipItem):
+        """Wird aufgerufen, wenn ein Clip direkt in der Timeline angeklickt wird."""
+        try:
+            idx = self.clips.index(clip)
+            self.list_clips.setCurrentRow(idx)  # synchronisiert Auswahl in der Liste
+            self.list_clips.setFocus()   # <<< Fokus erzwingen
+        except ValueError:
+            pass
+
+    def _select_audio_from_timeline(self, audio: AudioItem):
+        """Wird aufgerufen, wenn ein Audio direkt in der Timeline angeklickt wird."""
+        try:
+            idx = self.audios.index(audio)
+            self.list_audio.setCurrentRow(idx)
+            self.list_clips.setFocus()   # <<< Fokus erzwingen
+        except ValueError:
+            pass
+
 
     def on_apply_from_inspector(self):
         c = self.current_clip()
@@ -819,6 +870,44 @@ class EditorMainWindow(QtWidgets.QMainWindow):
     def on_audio_moved(self, audio: AudioItem):
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=False)
+
+    def _on_scene_selection_changed(self):
+        items = self.scene.selectedItems()
+        if not items:
+            # Beide Listen deselektieren
+            self.list_clips.blockSignals(True)
+            self.list_audio.blockSignals(True)
+            self.list_clips.clearSelection()
+            self.list_audio.clearSelection()
+            self.list_clips.blockSignals(False)
+            self.list_audio.blockSignals(False)
+            return
+
+        it = items[0]
+
+        if isinstance(it, ClipGraphicsItem):
+            clip = it.model
+            try:
+                idx = self.clips.index(clip)
+            except ValueError:
+                idx = -1
+            if idx >= 0:
+                self.list_clips.blockSignals(True)
+                self.list_clips.setCurrentRow(idx)
+                self.list_clips.blockSignals(False)
+                self.list_clips.setFocus()  # Fokus hält die Selektion stabil
+
+        elif isinstance(it, AudioGraphicsItem):
+            aud = it.model
+            try:
+                idx = self.audios.index(aud)
+            except ValueError:
+                idx = -1
+            if idx >= 0:
+                self.list_audio.blockSignals(True)
+                self.list_audio.setCurrentRow(idx)
+                self.list_audio.blockSignals(False)
+                self.list_audio.setFocus()
 
     # ----------------- preview quality -----------------
     def on_preview_quality_changed(self, text: str):
@@ -973,7 +1062,10 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 old_out = c.safe_out(); c.trim_out = local
                 new_c = ClipItem(path=c.path, duration=c.duration, trim_in=local, trim_out=old_out, start_time=t)
                 self.clips.append(new_c)
-                gi = self.scene.add_clip_item(new_c); gi.moved.connect(self.on_clip_moved)
+                gi = self.scene.add_clip_item(new_c)
+                gi.moved.connect(self.on_clip_moved)
+                #gi.clicked.connect(lambda clip=new_c: self._select_clip_from_timeline(clip))
+
                 self.graphics_by_clip[self._gi_key(new_c)] = gi
                 gi_left = self.graphics_by_clip.get(self._gi_key(c))
                 if gi_left:
@@ -989,7 +1081,10 @@ class EditorMainWindow(QtWidgets.QMainWindow):
                 old_out = a.safe_out(); a.trim_out = local
                 new_a = AudioItem(path=a.path, duration=a.duration, trim_in=local, trim_out=old_out, start_time=t, gain_db=a.gain_db)
                 self.audios.append(new_a)
-                gi = self.scene.add_audio_item(new_a); gi.moved.connect(self.on_audio_moved)
+                gi = self.scene.add_audio_item(new_a)
+                gi.moved.connect(self.on_audio_moved)
+              #  gi.clicked.connect(lambda audio=new_a: self._select_audio_from_timeline(audio))
+
                 self.audio_graphics_by_clip[self._agi_key(new_a)] = gi
                 gi_left = self.audio_graphics_by_clip.get(self._agi_key(a))
                 if gi_left:

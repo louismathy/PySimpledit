@@ -85,7 +85,8 @@ class Playhead(QtWidgets.QGraphicsLineItem):
 
 # ------------------------------ Clip-Graphics ------------------------------
 class ClipGraphicsItem(QtWidgets.QGraphicsObject):
-    moved = Signal(object)  # emits ClipItem
+    moved = Signal(object)   # schon vorhanden
+    clicked = Signal(object) # NEU: ClipItem-Objekt
 
     def __init__(self, clip: ClipItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -128,18 +129,32 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def paint(self, p: QtGui.QPainter, option, widget=None):
         r = self._rect
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+
+        # Brush und Pen
         p.setBrush(self.brush)
-        p.setPen(self.pen)
+
+        if self.isSelected():
+            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)  # Gelber Rand
+            p.setPen(sel_pen)
+        else:
+            p.setPen(self.pen)
+
         p.drawRect(r)
+
+        # Label
         p.setPen(Qt.white)
         p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
 
     def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit(self.model)  # <- NEU: Signal abfeuern
+
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
         self._dragging = True
         return super().mousePressEvent(e)
+
 
     def mouseReleaseEvent(self, e):
         sc: "TimelineScene" = self.scene()
@@ -174,8 +189,8 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
 
 
 class AudioGraphicsItem(QtWidgets.QGraphicsObject):
-    moved = Signal(object)  # emits AudioItem
-
+    moved = Signal(object)
+    clicked = Signal(object)  # NEU: AudioItem
     def __init__(self, clip: AudioItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model = clip
@@ -219,13 +234,27 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     def paint(self, p: QtGui.QPainter, option, widget=None):
         r = self._rect
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+
+        # Standard-Füllung
         p.setBrush(self.brush)
         p.setPen(self.pen)
         p.drawRect(r)
+
+        # Gelbe Outline bei Auswahl
+        if self.isSelected():
+            sel_pen = QtGui.QPen(QtGui.QColor(255, 215, 0), 2.5, Qt.SolidLine)
+            p.setPen(sel_pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.drawRect(r)
+
+        # Text
         p.setPen(Qt.white)
-        p.drawStaticText(r.left() + 6, r.top() + 6, self._label_cache)
+        p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
+
 
     def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit(self.model)  # AudioItem nach außen geben
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
@@ -240,6 +269,9 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
             self._dragging = False
             self.model.start_time = max(0.0, self.pos().x() / self.pps)
             self.moved.emit(self.model)
+
+        if e.button() == Qt.LeftButton and not self._dragging:
+            self.clicked.emit(self.model)
         return super().mouseReleaseEvent(e)
 
     def _snap_x(self, x: float) -> float:
