@@ -17,7 +17,7 @@ AVAILABLE_EFFECTS = {
 }
 
 REVERSE_AVAILABLE_EFFECTS = {v: k for k, v in AVAILABLE_EFFECTS.items()}
-import vlc
+
 from moviepy import (
     VideoFileClip, AudioFileClip, ColorClip,
     concatenate_videoclips, CompositeAudioClip
@@ -31,6 +31,10 @@ from utils import (
     fmt_time, make_subclip, make_audio_subclip,
     set_start_compat, set_audio_compat
 )
+
+# NEU: Eigene Audioengine + Mixer (statt VLC)
+from audio_engine import AudioEngine
+from timeline_mixer import TimelineMixer
 
 
 class EditorMainWindow(QtWidgets.QMainWindow):
@@ -59,38 +63,23 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             "audio_bitrate": "192k",
         }
 
-        # ---------- Playback/Sync State ----------
-        # Welche Pfade sind aktuell aktiv? (wird für Set-Vergleich genutzt)
-        self._active_paths: set[str] = set()
-        # Letzte "gesetzte" Zeit pro Pfad (ms), um unnötige Seeks zu vermeiden
-        self._last_seek_by_path: Dict[str, int] = {}
-        # Rate-Limit per Pfad (Wallclock ms)
-        self._last_seek_wall_ms: Dict[str, int] = {}
-        # Schwellwerte für Sync-Ruhe
-        self._seek_guard_ms = 350    # erst seeken, wenn Delta größer als das ist
-        self._seek_min_interval_ms = 1200  # min. Zeit zwischen zwei Seeks je Pfad
+        # ---------- Audio Engine ----------
+        self.audio_sr = 48000
+        self.audio_ch = 2
+        self.audio_block = 1024
+        # Mixer liest direkt aus self.clips / self.audios (callables, damit immer aktuell)
+        self.mixer = TimelineMixer(lambda: self.clips, lambda: self.audios,
+                                   sample_rate=self.audio_sr, channels=self.audio_ch)
+        self.audio_engine = AudioEngine(sample_rate=self.audio_sr, channels=self.audio_ch, blocksize=self.audio_block)
+        self.audio_engine.set_timeline_callback(self.mixer.render_block)
 
-        # Shortcuts
-        QShortcut(Qt.Key_Space, self, activated=self.on_toggle_play)
-        QShortcut(Qt.Key_Delete, self, activated=self.on_remove)
-        QShortcut(Qt.Key_I, self, activated=self.mark_in)
-        QShortcut(Qt.Key_O, self, activated=self.mark_out)
-        QShortcut(Qt.Key_S, self, activated=self.split_at_playhead)
-
-        # ----- VLC AudioEngine -----
-        # Ruhiger/robuster starten (weniger Console-Noise)
-        self.vlc_instance = vlc.Instance("--no-xlib", "--novideo", "--quiet", "--file-caching=150")
-        self.audio_players: Dict[str, vlc.MediaPlayer] = {}
-        self.video_players: Dict[str, vlc.MediaPlayer] = {}
-
-        self.statusBar().showMessage("Frame-Preview: Audio via VLC", 3000)
+        self.statusBar().showMessage("Frame-Preview wie gehabt • Audio via PortAudio (pydub/ffmpeg)", 3000)
 
         # Timeline Scene & View
         self.scene = TimelineScene(self.pps)
         self.timeline = TimelineView(self.scene)
         self.timeline.time_changed.connect(self.seek)
         self.scene.selectionChanged.connect(self._on_scene_selection_changed)
-
 
         # Frame preview
         self.video_widget = QtWidgets.QLabel("Frame Preview")
@@ -243,7 +232,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         la.addRow(self.btn_apply_audio)
         inspector.addTab(wa, "Audio")
 
-                # --- Effects inspector (per-clip) ---
+        # --- Effects inspector (per-clip) ---
         we = QtWidgets.QWidget()
         le = QtWidgets.QVBoxLayout(we)
         le.setContentsMargins(8, 8, 8, 8)
@@ -284,7 +273,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.btn_eff_down.clicked.connect(self.on_effect_move_down)
         self.list_effects.itemSelectionChanged.connect(self._update_effect_buttons_enabled)
 
-
         splitter.addWidget(left_panel)
 
         # Center panel (video preview + timeline)
@@ -297,6 +285,13 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
         self.setCentralWidget(splitter)
 
+        # Shortcuts
+        QShortcut(Qt.Key_Space, self, activated=self.on_toggle_play)
+        QShortcut(Qt.Key_Delete, self, activated=self.on_remove)
+        QShortcut(Qt.Key_I, self, activated=self.mark_in)
+        QShortcut(Qt.Key_O, self, activated=self.mark_out)
+        QShortcut(Qt.Key_S, self, activated=self.split_at_playhead)
+
         # Play timer
         self.play_timer = QTimer(self)
         self.play_timer.setInterval(16)
@@ -305,192 +300,10 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         # interne Sortier-Listen initialisieren
         self._rebuild_sorted()
 
-    # ----------------- VLC Audio Helpers -----------------
-    def _ensure_audio_player(self, audio: AudioItem) -> vlc.MediaPlayer:
-        if audio.path not in self.audio_players:
-            media = self.vlc_instance.media_new(audio.path)
-            p = self.vlc_instance.media_player_new()
-            p.set_media(media)
-            p.audio_set_volume(80)
-            self.audio_players[audio.path] = p
-        return self.audio_players[audio.path]
-
-    def _ensure_video_player(self, clip: ClipItem) -> vlc.MediaPlayer:
-        if clip.path not in self.video_players:
-            media = self.vlc_instance.media_new(clip.path)
-            p = self.vlc_instance.media_player_new()
-            p.set_media(media)
-            p.audio_set_volume(80)
-            self.video_players[clip.path] = p
-        return self.video_players[clip.path]
-
-    def _stop_all_audio(self):
-        for p in list(self.audio_players.values()) + list(self.video_players.values()):
-            try:
-                p.stop()
-            except:
-                pass
-        self._active_paths.clear()
-
-    # ----------------- Zielzustand bestimmen & anwenden -----------------
-    def _recompute_active_targets(self, t: float) -> Dict[str, int]:
-        """
-        Liefert {path: offset_ms} für alle Quellen (Video-Audio + Extra-Audio),
-        die zum Zeitpunkt t aktiv sein sollen.
-        """
-        targets: Dict[str, int] = {}
-
-        for c in self.clips:
-            if c.start_time <= t < c.start_time + c.trimmed_length():
-                off_ms = int(((t - c.start_time) + c.trim_in) * 1000)
-                targets[c.path] = off_ms
-
-        for a in self.audios:
-            if a.start_time <= t < a.start_time + a.trimmed_length():
-                off_ms = int(((t - a.start_time) + a.trim_in) * 1000)
-                targets[a.path] = off_ms
-
-        return targets
-
-    def _need_seek(self, path: str, desired_ms: int) -> bool:
-        """
-        Entscheidet, ob wir für 'path' wirklich einen neuen seek auslösen müssen,
-        basierend auf letzter gesetzter Zeit & einem Minimalintervall.
-        """
-        now_ms = QtCore.QTime.currentTime().msecsSinceStartOfDay()
-        last_wall = self._last_seek_wall_ms.get(path, -10_000)
-        if now_ms - last_wall < self._seek_min_interval_ms:
-            return False
-
-        last_set = self._last_seek_by_path.get(path, None)
-        if last_set is None:
-            return True
-        return abs(desired_ms - last_set) > self._seek_guard_ms
-
-    def _seek_player(self, player: vlc.MediaPlayer, path: str, desired_ms: int):
-        try:
-            # VLC braucht play() bevor set_time() zuverlässig wirkt
-            player.play()
-            QtCore.QTimer.singleShot(
-                60, lambda pl=player, p=path, ms=desired_ms: self._finish_seek(pl, p, ms)
-            )
-        except:
-            pass
-
-    def _finish_seek(self, player: vlc.MediaPlayer, path: str, ms: int):
-        try:
-            player.set_time(ms)
-            self._last_seek_by_path[path] = ms
-            self._last_seek_wall_ms[path] = QtCore.QTime.currentTime().msecsSinceStartOfDay()
-        except:
-            pass
-
-    def _apply_targets(self, targets: Dict[str, int], force: bool = False):
-        """
-        Wendet den Zielzustand an:
-        - stoppt Player, die nicht mehr aktiv sind
-        - startet/seekt Player, die aktiv sein müssen
-        - rate-limited & mit Seek-Grenze
-        """
-        target_paths = set(targets.keys())
-
-        # Stoppe alles, was nicht mehr aktiv ist
-        to_stop = self._active_paths - target_paths
-        for path in to_stop:
-            pl = self.video_players.get(path) or self.audio_players.get(path)
-            if pl:
-                try: pl.stop()
-                except: pass
-
-        # Starte/Seeke, was aktiv sein soll
-        for path in target_paths:
-            # Player besorgen
-            pl = self.video_players.get(path)
-            if pl is None:
-                ap = self.audio_players.get(path)
-                if ap is None:
-                    # herausfinden ob es ein Video- oder Audio-Item ist
-                    clip = next((c for c in self.clips if c.path == path), None)
-                    if clip is not None:
-                        pl = self._ensure_video_player(clip)
-                    else:
-                        aud = next((a for a in self.audios if a.path == path), None)
-                        if aud is not None:
-                            pl = self._ensure_audio_player(aud)
-                else:
-                    pl = ap
-
-            if not pl:
-                continue
-
-            desired_ms = targets[path]
-
-            # Start-/Seek-Entscheidung
-            try:
-                playing = pl.is_playing()
-            except:
-                playing = False
-
-            if force:
-                try:
-                    pl.stop()
-                except:
-                    pass
-                self._seek_player(pl, path, desired_ms)
-            else:
-                if not playing:
-                    # Neu starten (z.B. wir sind in Clip "reingelaufen")
-                    self._seek_player(pl, path, desired_ms)
-                else:
-                    # Läuft schon → nur seeken, wenn sich's wirklich lohnt
-                    if self._need_seek(path, desired_ms):
-                        self._seek_player(pl, path, desired_ms)
-
-        # Merke den neuen Aktivsatz
-        self._active_paths = target_paths
-
-    # Praktischer Helper für alle Timeline-Änderungen
-    def _on_timeline_changed(self, hard: bool = True):
-        self._rebuild_sorted()
-        if self.playing and self.audio_enabled:
-            targets = self._recompute_active_targets(self.current_time)
-            self._apply_targets(targets, force=hard)
-
-    # ----------------- Play/Stop -----------------
-    def on_toggle_play(self):
-        try:
-            has_anything = bool(self._clip_at_time(self.current_time) or self._audio_at_time(self.current_time))
-            if not self.playing and not has_anything:
-                self.statusBar().showMessage("Nix zum Abspielen an dieser Stelle.", 2500)
-                self.action_play.setText("▶︎")
-                return
-
-            self.playing = not self.playing
-            self.action_play.setText("⏸" if self.playing else "▶︎")
-
-            if self.playing:
-                self._last_tick_ns = time.perf_counter_ns()
-                self.play_timer.start()
-
-                if self.audio_enabled:
-                    targets = self._recompute_active_targets(self.current_time)
-                    self._apply_targets(targets, force=True)
-            else:
-                self.play_timer.stop()
-                self._last_tick_ns = None
-                self._stop_all_audio()
-        except Exception as e:
-            traceback.print_exc()
-            self.statusBar().showMessage(f"Play/Pause-Fehler: {e}", 6000)
-            self.playing = False
-            self.play_timer.stop()
-            self._stop_all_audio()
-            self.action_play.setText("▶︎")
-
     # ----------------- helpers -----------------
     def closeEvent(self, e: QtGui.QCloseEvent):
         try:
-            self._stop_all_audio()
+            self.audio_engine.stop()
             self.frame_thread.stop(); self.frame_thread.quit(); self.frame_thread.wait(800)
         except Exception:
             pass
@@ -501,7 +314,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
     def _gi_key(self, c: ClipItem) -> int: return id(c)
     def _agi_key(self, a: AudioItem) -> int: return id(a)
-
 
     def _current_clip_or_none(self) -> Optional[ClipItem]:
         return self.current_clip()
@@ -600,6 +412,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if 0 <= row < len(self.audios):
             return self.audios[row]
         return None
+
     def refresh_clip_list_labels(self):
         # aktuelle Auswahl merken
         selected = self.current_clip()
@@ -636,10 +449,20 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self._sorted_audio_by_start = sorted(self.audios, key=lambda a: a.start_time)
         self._sorted_audio_starts = [a.start_time for a in self._sorted_audio_by_start]
 
+    def _on_timeline_changed(self, hard: bool = True):
+        """
+        Wird aufgerufen, wenn Clips/Audio in der Timeline verschoben/editiert wurden.
+        Aktuell sorgt sie nur dafür, dass die internen Sortierlisten aktualisiert sind.
+        """
+        self._rebuild_sorted()
+        # Wenn später z.B. Waveform-Caches oder Previews neu gebaut werden sollen, 
+        # kann das hier passieren. Für AudioEngine brauchen wir nichts weiter machen.
+
+
     # ----------------- project I/O -----------------
     def on_new_project(self):
         if self._confirm_discard():
-            self._stop_all_audio()
+            self.audio_engine.pause()
             self.clips.clear(); self.audios.clear()
             self.graphics_by_clip.clear(); self.audio_graphics_by_clip.clear()
             self.scene.clear(); self.scene = TimelineScene(self.pps); self.timeline.setScene(self.scene)
@@ -648,7 +471,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Neues Projekt", 3000)
             self._on_timeline_changed(hard=True)
             self._refresh_effects_ui()
-
 
     def on_open_project(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Projekt öffnen", "", "Simpledit (*.sedit.json)")
@@ -745,13 +567,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         row = self.list_clips.currentRow()
         if 0 <= row < len(self.clips):
             c = self.clips.pop(row)
-            # Player dieses Clips stoppen & entsorgen
-            pl = self.video_players.pop(c.path, None)
-            if pl:
-                try: pl.stop()
-                except: pass
-            self._last_seek_by_path.pop(c.path, None)
-            self._last_seek_wall_ms.pop(c.path, None)
 
             gi = self.graphics_by_clip.pop(self._gi_key(c), None)
             if gi: self.scene.removeItem(gi)
@@ -763,12 +578,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         rowa = self.list_audio.currentRow()
         if 0 <= rowa < len(self.audios):
             a = self.audios.pop(rowa)
-            pl = self.audio_players.pop(a.path, None)
-            if pl:
-                try: pl.stop()
-                except: pass
-            self._last_seek_by_path.pop(a.path, None)
-            self._last_seek_wall_ms.pop(a.path, None)
 
             gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
             if gi: self.scene.removeItem(gi)
@@ -788,6 +597,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         
         self._request_frame(c.path, c.trim_in)
         self._refresh_effects_ui()
+
     def _select_clip_from_timeline(self, clip: ClipItem):
         """Wird aufgerufen, wenn ein Clip direkt in der Timeline angeklickt wird."""
         try:
@@ -805,7 +615,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self.list_clips.setFocus()   # <<< Fokus erzwingen
         except ValueError:
             pass
-
 
     def on_apply_from_inspector(self):
         c = self.current_clip()
@@ -861,7 +670,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=True)
         self._refresh_effects_ui()
-
 
     def on_clip_moved(self, clip: ClipItem):
         self.refresh_clip_list_labels()
@@ -931,29 +739,61 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.action_audio_toggle.setText("Audio: AN" if checked else "Audio: AUS")
         self.statusBar().showMessage(f"Audio {'aktiv' if checked else 'ausgeschaltet'}", 2000)
         if not checked:
-            self._stop_all_audio()
+            self.audio_engine.pause()
         else:
             if self.playing:
-                targets = self._recompute_active_targets(self.current_time)
-                self._apply_targets(targets, force=True)
+                self.audio_engine.play(self.current_time)
+
+    def on_toggle_play(self):
+        try:
+            has_anything = bool(self._clip_at_time(self.current_time) or self._audio_at_time(self.current_time))
+            if not self.playing and not has_anything:
+                self.statusBar().showMessage("Nix zum Abspielen an dieser Stelle.", 2500)
+                self.action_play.setText("▶︎")
+                return
+
+            self.playing = not self.playing
+            self.action_play.setText("⏸" if self.playing else "▶︎")
+
+            if self.playing:
+                self._last_tick_ns = time.perf_counter_ns()
+                self.play_timer.start()
+
+                if self.audio_enabled:
+                    self.audio_engine.play(self.current_time)
+            else:
+                self.play_timer.stop()
+                self._last_tick_ns = None
+                self.audio_engine.pause()
+        except Exception as e:
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Play/Pause-Fehler: {e}", 6000)
+            self.playing = False
+            self.play_timer.stop()
+            try:
+                self.audio_engine.pause()
+            except:
+                pass
+            self.action_play.setText("▶︎")
 
     def _tick_playback(self):
-        now_ns = time.perf_counter_ns()
-        if getattr(self, "_last_tick_ns", None) is None:
-            self._last_tick_ns = now_ns
-            return
-        dt = (now_ns - self._last_tick_ns) / 1e9
-        self._last_tick_ns = now_ns
-        if dt < 0:
-            dt = 0
-        self.seek(self.current_time + dt, from_player=True)
-
-        # Nur wenn playing & audio_enabled → evtl. Set-Änderungen anwenden
+        # Wenn Audio aktiv ist, ist Audio-Clock führend
         if self.playing and self.audio_enabled:
-            targets = self._recompute_active_targets(self.current_time)
-            # Wenn sich der aktive Satz ändert → force, sonst NICHT dauernd seeken
-            changed = set(targets.keys()) != self._active_paths
-            self._apply_targets(targets, force=changed)
+            t = self.audio_engine.time()
+            self.seek(t, from_player=True)
+            return
+
+        # Fallback: wenn ohne Audio abgespielt wird, halte die Zeit per Perf-Counter weiter
+        if self.playing and not self.audio_enabled:
+            now_ns = time.perf_counter_ns()
+            if getattr(self, "_last_tick_ns", None) is None:
+                self._last_tick_ns = now_ns
+                return
+            dt = (now_ns - self._last_tick_ns) / 1e9
+            self._last_tick_ns = now_ns
+            if dt < 0:
+                dt = 0
+            self.seek(self.current_time + dt, from_player=True)
 
     def _clip_at_time(self, t: float) -> Optional[ClipItem]:
         if not getattr(self, "_sorted_by_start", None): return None
@@ -996,10 +836,9 @@ class EditorMainWindow(QtWidgets.QMainWindow):
             self._last_preview_at_ms = now_ms
 
         # --- Audio ---
-        if self.playing and self.audio_enabled:
-            targets = self._recompute_active_targets(self.current_time)
-            # Bei User-Seek (from_player=False) → force neu setzen
-            self._apply_targets(targets, force=not from_player)
+        if self.audio_enabled and not from_player:
+            # Bei User-Seek → Audio-Clock setzen
+            self.audio_engine.seek(self.current_time)
 
     # ----------------- Frame thread hooks -----------------
     def _request_frame(self, path: str, t_local: float):
@@ -1020,7 +859,6 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         pix = QtGui.QPixmap.fromImage(img)
         if isinstance(self.video_widget, QtWidgets.QLabel):
             self.video_widget.setPixmap(pix)
-
 
     def _on_frame_error(self, msg: str):
         if isinstance(self.video_widget, QtWidgets.QLabel):
