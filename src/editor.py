@@ -80,6 +80,7 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self.timeline = TimelineView(self.scene)
         self.timeline.time_changed.connect(self.seek)
         self.scene.selectionChanged.connect(self._on_scene_selection_changed)
+        self._last_selection_kind: Optional[str] = None  # "clip" | "audio" | None
 
         # Frame preview
         self.video_widget = QtWidgets.QLabel("Frame Preview")
@@ -299,6 +300,18 @@ class EditorMainWindow(QtWidgets.QMainWindow):
 
         # interne Sortier-Listen initialisieren
         self._rebuild_sorted()
+
+        # Direkt nach dem Aufbau der UI:
+        QtCore.QTimer.singleShot(0, self._jump_to_start)
+
+    def _jump_to_start(self):
+        try:
+            # Scroll nach ganz links
+            self.timeline.horizontalScrollBar().setValue(self.timeline.horizontalScrollBar().minimum())
+        except Exception:
+            pass
+        # Zeit auf 0 setzen (Playhead + Preview syncen)
+        self.seek(0.0, from_player=False)
 
     # ----------------- helpers -----------------
     def closeEvent(self, e: QtGui.QCloseEvent):
@@ -564,39 +577,110 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         if self.list_audio.currentRow() == -1 and self.audios: self.list_audio.setCurrentRow(0)
 
     def on_remove(self):
-        row = self.list_clips.currentRow()
-        if 0 <= row < len(self.clips):
-            c = self.clips.pop(row)
+        kind = getattr(self, "_last_selection_kind", None)
 
-            gi = self.graphics_by_clip.pop(self._gi_key(c), None)
-            if gi: self.scene.removeItem(gi)
+        # 1) Vorrang: zuletzt gewählter Typ
+        if kind == "audio":
+            rowa = self.list_audio.currentRow()
+            if 0 <= rowa < len(self.audios):
+                a = self.audios.pop(rowa)
+                gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
+                if gi: self.scene.removeItem(gi)
+                self.refresh_audio_list_labels()
+                self._on_timeline_changed(hard=True)
+                return
 
-            self.refresh_clip_list_labels()
-            self._on_timeline_changed(hard=True)
-            return
+        if kind == "clip":
+            row = self.list_clips.currentRow()
+            if 0 <= row < len(self.clips):
+                c = self.clips.pop(row)
+                gi = self.graphics_by_clip.pop(self._gi_key(c), None)
+                if gi: self.scene.removeItem(gi)
+                self.refresh_clip_list_labels()
+                self._on_timeline_changed(hard=True)
+                return
 
+        # 2) Fallback: echte Listenselektion prüfen
         rowa = self.list_audio.currentRow()
-        if 0 <= rowa < len(self.audios):
+        if self.list_audio.selectedIndexes() and 0 <= rowa < len(self.audios):
             a = self.audios.pop(rowa)
-
             gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
             if gi: self.scene.removeItem(gi)
-
             self.refresh_audio_list_labels()
             self._on_timeline_changed(hard=True)
+            self._last_selection_kind = "audio"
+            return
+
+        row = self.list_clips.currentRow()
+        if self.list_clips.selectedIndexes() and 0 <= row < len(self.clips):
+            c = self.clips.pop(row)
+            gi = self.graphics_by_clip.pop(self._gi_key(c), None)
+            if gi: self.scene.removeItem(gi)
+            self.refresh_clip_list_labels()
+            self._on_timeline_changed(hard=True)
+            self._last_selection_kind = "clip"
+            return
+
+        # 3) Letzter Fallback: Scene-Selektion (Timeline)
+        items = self.scene.selectedItems() if self.scene else []
+        for it in items:
+            if isinstance(it, AudioGraphicsItem):
+                try:
+                    idx = self.audios.index(it.model)
+                except ValueError:
+                    idx = -1
+                if idx >= 0:
+                    a = self.audios.pop(idx)
+                    gi = self.audio_graphics_by_clip.pop(self._agi_key(a), None)
+                    if gi: self.scene.removeItem(gi)
+                    self.refresh_audio_list_labels()
+                    self._on_timeline_changed(hard=True)
+                    self._last_selection_kind = "audio"
+                    return
+
+        for it in items:
+            if isinstance(it, ClipGraphicsItem):
+                try:
+                    idx = self.clips.index(it.model)
+                except ValueError:
+                    idx = -1
+                if idx >= 0:
+                    c = self.clips.pop(idx)
+                    gi = self.graphics_by_clip.pop(self._gi_key(c), None)
+                    if gi: self.scene.removeItem(gi)
+                    self.refresh_clip_list_labels()
+                    self._on_timeline_changed(hard=True)
+                    self._last_selection_kind = "clip"
+                    return
+
 
     def on_select_clip(self, row: int):
+        # Audio-Liste zurücksetzen
+        self._last_selection_kind = "clip"
+        self.list_audio.blockSignals(True)
+        self.list_audio.clearSelection()
+        self.list_audio.blockSignals(False)
+
         if not (0 <= row < len(self.clips)):
-            self.lbl_path.setText("-"); self.lbl_duration.setText("-")
-            self.spin_trim_in.setValue(0.0); self.spin_trim_out.setValue(0.0); self.spin_start.setValue(0.0)
+            self.lbl_path.setText("-")
+            self.lbl_duration.setText("-")
+            self.spin_trim_in.setValue(0.0)
+            self.spin_trim_out.setValue(0.0)
+            self.spin_start.setValue(0.0)
             return
+
         c = self.clips[row]
-        self.lbl_path.setText(c.path); self.lbl_duration.setText(f"{c.duration:.3f}s")
-        self.spin_trim_in.setMaximum(c.duration); self.spin_trim_out.setMaximum(c.duration)
-        self.spin_trim_in.setValue(c.trim_in); self.spin_trim_out.setValue(c.safe_out()); self.spin_start.setValue(c.start_time)
+        self.lbl_path.setText(c.path)
+        self.lbl_duration.setText(f"{c.duration:.3f}s")
+        self.spin_trim_in.setMaximum(c.duration)
+        self.spin_trim_out.setMaximum(c.duration)
+        self.spin_trim_in.setValue(c.trim_in)
+        self.spin_trim_out.setValue(c.safe_out())
+        self.spin_start.setValue(c.start_time)
         
         self._request_frame(c.path, c.trim_in)
         self._refresh_effects_ui()
+
 
     def _select_clip_from_timeline(self, clip: ClipItem):
         """Wird aufgerufen, wenn ein Clip direkt in der Timeline angeklickt wird."""
@@ -635,15 +719,31 @@ class EditorMainWindow(QtWidgets.QMainWindow):
         self._request_frame(c.path, c.trim_in)
 
     def on_select_audio(self, row: int):
+        self._last_selection_kind = "audio"
+        # Clip-Liste zurücksetzen
+        self.list_clips.blockSignals(True)
+        self.list_clips.clearSelection()
+        self.list_clips.blockSignals(False)
+
         if not (0 <= row < len(self.audios)):
-            self.lbl_apath.setText("-"); self.lbl_adur.setText("-")
-            self.spin_ain.setValue(0.0); self.spin_aout.setValue(0.0); self.spin_astart.setValue(0.0); self.spin_again.setValue(0.0)
+            self.lbl_apath.setText("-")
+            self.lbl_adur.setText("-")
+            self.spin_ain.setValue(0.0)
+            self.spin_aout.setValue(0.0)
+            self.spin_astart.setValue(0.0)
+            self.spin_again.setValue(0.0)
             return
+
         a = self.audios[row]
-        self.lbl_apath.setText(a.path); self.lbl_adur.setText(f"{a.duration:.3f}s")
-        self.spin_ain.setMaximum(a.duration); self.spin_aout.setMaximum(a.duration)
-        self.spin_ain.setValue(a.trim_in); self.spin_aout.setValue(a.safe_out())
-        self.spin_astart.setValue(a.start_time); self.spin_again.setValue(a.gain_db)
+        self.lbl_apath.setText(a.path)
+        self.lbl_adur.setText(f"{a.duration:.3f}s")
+        self.spin_ain.setMaximum(a.duration)
+        self.spin_aout.setMaximum(a.duration)
+        self.spin_ain.setValue(a.trim_in)
+        self.spin_aout.setValue(a.safe_out())
+        self.spin_astart.setValue(a.start_time)
+        self.spin_again.setValue(a.gain_db)
+
 
     def on_apply_audio(self):
         a = self.current_audio()

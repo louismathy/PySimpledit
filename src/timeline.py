@@ -83,10 +83,9 @@ class Playhead(QtWidgets.QGraphicsLineItem):
         self.setLine(x, 0, x, scene_h)
 
 
-# ------------------------------ Clip-Graphics ------------------------------
 class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     moved = Signal(object)   # schon vorhanden
-    clicked = Signal(object) # NEU: ClipItem-Objekt
+    clicked = Signal(object) # ClipItem-Objekt
 
     def __init__(self, clip: ClipItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -100,12 +99,12 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
             | QtWidgets.QGraphicsItem.ItemIsMovable
             | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
         )
-        self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        self.setCacheMode(QtWidgets.QGraphicsItem.ItemCoordinateCache)
         self.setZValue(10)
 
         self.brush = QtGui.QBrush(QtGui.QColor(70, 120, 200, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(20, 50, 110))
-        self.pen.setWidthF(1.0)
+        self.pen = QtGui.QPen(QtGui.QColor(70, 120, 200, 180))  # gleiche Farbe → keine Ränder beim Zoomen
+        self.pen.setWidth(0)
 
         self.snap_eps = 6.0
         self._label_cache = QtGui.QStaticText()
@@ -121,7 +120,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         return self._rect
 
     def update_geometry(self):
-        w = max(12.0, self.model.trimmed_length() * self.pps)
+        w = max(12.0, round(self.model.trimmed_length() * self.pps))
         self.prepareGeometryChange()
         self._rect = QRectF(0, TRACK_Y, w, TRACK_H)
         self.setPos(self.model.start_time * self.pps, 0)
@@ -129,32 +128,24 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def paint(self, p: QtGui.QPainter, option, widget=None):
         r = self._rect
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
-
-        # Brush und Pen
         p.setBrush(self.brush)
-
         if self.isSelected():
-            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)  # Gelber Rand
+            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)  # gelber Rand
             p.setPen(sel_pen)
         else:
             p.setPen(self.pen)
-
         p.drawRect(r)
-
-        # Label
         p.setPen(Qt.white)
         p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self.clicked.emit(self.model)  # <- NEU: Signal abfeuern
-
+            self.clicked.emit(self.model)
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
         self._dragging = True
         return super().mousePressEvent(e)
-
 
     def mouseReleaseEvent(self, e):
         sc: "TimelineScene" = self.scene()
@@ -172,7 +163,6 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         for t in targets:
             if abs(x - t) <= self.snap_eps:
                 return t
-
         grid = 0.1 * self.pps
         if grid > 1:
             xg = round(x / grid) * grid
@@ -183,14 +173,16 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange:
             new_pos: QPointF = value
-            new_pos.setY(0)
+            new_pos.setY(0)  # Clips immer bei y=0 halten
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
 
 
+
 class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     moved = Signal(object)
-    clicked = Signal(object)  # NEU: AudioItem
+    clicked = Signal(object)  # AudioItem
+
     def __init__(self, clip: AudioItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.model = clip
@@ -203,12 +195,12 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
             | QtWidgets.QGraphicsItem.ItemIsMovable
             | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges
         )
-        self.setCacheMode(QtWidgets.QGraphicsItem.DeviceCoordinateCache)
+        self.setCacheMode(QtWidgets.QGraphicsItem.ItemCoordinateCache)
         self.setZValue(8)
 
         self.brush = QtGui.QBrush(QtGui.QColor(60, 180, 120, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(20, 90, 70))
-        self.pen.setWidthF(1.0)
+        self.pen = QtGui.QPen(QtGui.QColor(60, 180, 120, 180))  # gleiche Farbe → keine Striche
+        self.pen.setWidth(0)
 
         self.snap_eps = 6.0
         self._label_cache = QtGui.QStaticText()
@@ -226,7 +218,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         return self._rect
 
     def update_geometry(self):
-        w = max(12.0, self.model.trimmed_length() * self.pps)
+        w = max(12.0, round(self.model.trimmed_length() * self.pps))
         self.prepareGeometryChange()
         self._rect = QRectF(0, AUDIO_TRACK_Y, w, AUDIO_TRACK_H)
         self.setPos(self.model.start_time * self.pps, 0)
@@ -234,27 +226,20 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     def paint(self, p: QtGui.QPainter, option, widget=None):
         r = self._rect
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
-
-        # Standard-Füllung
         p.setBrush(self.brush)
         p.setPen(self.pen)
         p.drawRect(r)
-
-        # Gelbe Outline bei Auswahl
         if self.isSelected():
             sel_pen = QtGui.QPen(QtGui.QColor(255, 215, 0), 2.5, Qt.SolidLine)
             p.setPen(sel_pen)
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawRect(r)
-
-        # Text
         p.setPen(Qt.white)
         p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
 
-
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self.clicked.emit(self.model)  # AudioItem nach außen geben
+            self.clicked.emit(self.model)
         sc: "TimelineScene" = self.scene()
         if sc:
             sc.build_snap_targets(exclude_item=self)
@@ -269,7 +254,6 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
             self._dragging = False
             self.model.start_time = max(0.0, self.pos().x() / self.pps)
             self.moved.emit(self.model)
-
         if e.button() == Qt.LeftButton and not self._dragging:
             self.clicked.emit(self.model)
         return super().mouseReleaseEvent(e)
@@ -280,20 +264,21 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         for t in targets:
             if abs(x - t) <= self.snap_eps:
                 return t
-
         grid = 0.1 * self.pps
         if grid > 1:
             xg = round(x / grid) * grid
             if abs(x - xg) <= self.snap_eps:
                 return xg
         return x
-
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange:
             new_pos: QPointF = value
-            new_pos.setY(0)
+            # WICHTIG: y=0 lassen, weil der Track-Offset im boundingRect steckt
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
+
+
+
 
 
 # ------------------------------ Scene/View --------------------------------------
@@ -339,6 +324,9 @@ class TimelineScene(QtWidgets.QGraphicsScene):
                 it.pps = pps
                 it.update_geometry()
         self.invalidate(self.sceneRect())
+        # NEU: Playhead korrekt repositionieren
+        self.update_playhead_x(self.parent().current_time if hasattr(self.parent(), "current_time") else 0.0)
+
 
     def update_playhead_x(self, t_sec: float):
         x = t_sec * self.pps
@@ -399,9 +387,14 @@ class TimelineView(QtWidgets.QGraphicsView):
 
         scene.update_pps(pps1)
 
+        # Scroll-Korrektur
         new_x = t * pps1
         dx = new_x - cursor_scene.x()
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + int(dx))
+
+        # NEU: Playhead exakt auf aktueller Zeit
+        scene.update_playhead_x(self.window().current_time)
+
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
         if e.button() == Qt.LeftButton and e.position().y() <= RULER_H + 8:
