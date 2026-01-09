@@ -1,6 +1,13 @@
 # Simpledit
 
 Simpledit is a lightweight timeline editor built with PySide6 and MoviePy.
+## Architecture Highlights
+- Timeline-based deterministic playback
+- Separate preview and render pipelines
+- Custom audio engine with block-based mixing
+- Declarative effect chains (serializable)
+- O(log n) clip lookup during playback
+
 
 ## Requirements
 
