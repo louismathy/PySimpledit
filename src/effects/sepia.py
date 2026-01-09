@@ -17,7 +17,7 @@ class SepiaEffect(BaseEffect):
         import numpy as np
 
         def _sepia(img):
-            arr = img.astype(np.float32, copy=True)  # eigene, schreibbare Kopie
+            arr = img.astype(np.float32, copy=True)                             
             r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
 
             tr = 0.393*r + 0.769*g + 0.189*b
@@ -29,7 +29,7 @@ class SepiaEffect(BaseEffect):
             out[..., 1] = np.clip(tg, 0, 255).astype(np.uint8)
             out[..., 2] = np.clip(tb, 0, 255).astype(np.uint8)
 
-            if arr.shape[-1] == 4:  # Alpha-Kanal durchreichen
+            if arr.shape[-1] == 4:                            
                 out[..., 3] = arr[..., 3]
 
             return out

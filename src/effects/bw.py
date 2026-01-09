@@ -30,13 +30,13 @@ class BWEffect(BaseEffect):
         return clip.image_transform(_bw)
 
     def apply_qimage(self, img: "QImage") -> "QImage":
-        arr, _ = to_rgba_np(img)  # BGRA
-        # Grau aus BGR (achte: arr[...,2] = R)
+        arr, _ = to_rgba_np(img)        
+                                              
         r = arr[..., 2].astype(np.float32)
         g = arr[..., 1].astype(np.float32)
         b = arr[..., 0].astype(np.float32)
         gray = np.clip(0.299 * r + 0.587 * g + 0.114 * b, 0, 255).astype(np.uint8)
-        arr[..., 0] = gray  # B
-        arr[..., 1] = gray  # G
-        arr[..., 2] = gray  # R
+        arr[..., 0] = gray     
+        arr[..., 1] = gray     
+        arr[..., 2] = gray     
         return from_rgba_np(arr)

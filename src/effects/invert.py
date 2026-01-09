@@ -25,6 +25,6 @@ class InvertEffect(BaseEffect):
         return clip.image_transform(_invert)
 
     def apply_qimage(self, img: "QImage") -> "QImage":
-        arr, _ = to_rgba_np(img)  # BGRA
-        arr[..., 0:3] = 255 - arr[..., 0:3]  # B,G,R invertieren
+        arr, _ = to_rgba_np(img)        
+        arr[..., 0:3] = 255 - arr[..., 0:3]                     
         return from_rgba_np(arr)

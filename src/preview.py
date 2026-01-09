@@ -7,12 +7,7 @@ from moviepy import VideoFileClip
 
 
 class FramePreviewer(QtCore.QThread):
-    """
-    Thread, der Video-Frames zu einem gegebenen Zeitpunkt rendert und als QImage liefert.
-    - request(path, t, widget_w, widget_h, pref_height): neue Frame-Anfrage
-    - frame_ready(QImage): Signal mit fertigem Bild (ggf. auf Widgetgröße letterboxed)
-    - frame_error(str): Fehlermeldungen (z.B. Datei nicht lesbar)
-    """
+       
     frame_ready = QtCore.Signal(QtGui.QImage)
     frame_error = QtCore.Signal(str)
 
@@ -20,7 +15,7 @@ class FramePreviewer(QtCore.QThread):
         super().__init__(parent)
         self._queue: "queue.Queue[Tuple[str, float, int, int, int]]" = queue.Queue(maxsize=1)
         self._stop = threading.Event()
-        self._current_key = None  # (path, pref_h)
+        self._current_key = None                  
         self._clip: Optional[VideoFileClip] = None
 
     def run(self):
@@ -32,32 +27,32 @@ class FramePreviewer(QtCore.QThread):
             try:
                 key = (path, pref_h)
                 if key != self._current_key:
-                    # altes Clip-Objekt schließen
+                                                 
                     if self._clip is not None:
                         try:
                             self._clip.close()
                         except Exception:
                             pass
-                    # Zielauflösung: (None, pref_h) = automatische Breite bei vorgegebener Höhe
+                                                                                               
                     target = (None, pref_h) if pref_h and pref_h > 0 else None
                     self._clip = VideoFileClip(path, target_resolution=target)
                     self._current_key = key
 
                 clip = self._clip
                 if clip is None:
-                    raise RuntimeError("Clip nicht geöffnet")
+                    raise RuntimeError("Clip not opened")
 
-                # clamp t in [0, duration]
+                                          
                 t = max(0.0, min(t, float(clip.duration)))
 
-                # Frame holen (RGB)
-                frame = clip.get_frame(t)  # ndarray (H, W, 3)
+                                   
+                frame = clip.get_frame(t)                     
                 h, w, _ = frame.shape
 
-                # Nach QImage konvertieren
+                                          
                 qimg = QtGui.QImage(frame.data, w, h, 3 * w, QtGui.QImage.Format.Format_RGB888).copy()
 
-                # Optional auf Widgetgröße skalieren und letterboxen
+                                                                    
                 if wid > 0 and hei > 0:
                     qimg_scaled = qimg.scaled(wid, hei, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
                     final = QtGui.QImage(wid, hei, QtGui.QImage.Format.Format_RGB32)
@@ -75,10 +70,9 @@ class FramePreviewer(QtCore.QThread):
                 self.frame_error.emit(str(e))
 
     def request(self, path: str, t: float, widget_width: int, widget_height: int, pref_height: int):
-        """
-        Neue Frame-Anfrage. Überschreibt ggf. eine wartende Anfrage (nur 1 Slot).
-        """
-        # Queue leeren, damit nur die neueste Anfrage bearbeitet wird
+
+           
+                                                                     
         while True:
             try:
                 self._queue.get_nowait()

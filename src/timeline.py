@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from models import ClipItem, AudioItem
 from utils import fmt_time
 
-# ------------------------------ Layout-Constants ------------------------------
+                                                                                
 TRACK_H = 64.0
 TRACK_Y = 40.0
 RULER_H = 32.0
@@ -15,7 +15,7 @@ AUDIO_TRACK_Y = TRACK_Y + TRACK_H + 24.0
 AUDIO_TRACK_H = 40.0
 
 
-# ------------------------------ Ruler & Playhead ------------------------------
+                                                                                
 class TimeRuler(QtWidgets.QGraphicsItem):
     def __init__(self, pixels_per_second: float):
         super().__init__()
@@ -51,7 +51,7 @@ class TimeRuler(QtWidgets.QGraphicsItem):
             major *= math.ceil(est_ticks / max_ticks)
             minor = major / 5
 
-        # Minor ticks
+                     
         x0 = math.floor(start_s / minor) * minor
         t = x0
         while t <= end_s:
@@ -60,7 +60,7 @@ class TimeRuler(QtWidgets.QGraphicsItem):
             p.drawLine(QtCore.QLineF(x, RULER_H - h, x, RULER_H))
             t += minor
 
-        # Major labels
+                      
         p.setPen(QtGui.QColor(200, 200, 205))
         first_major = math.floor(start_s / major) * major
         t = first_major
@@ -84,8 +84,8 @@ class Playhead(QtWidgets.QGraphicsLineItem):
 
 
 class ClipGraphicsItem(QtWidgets.QGraphicsObject):
-    moved = Signal(object)   # schon vorhanden
-    clicked = Signal(object) # ClipItem-Objekt
+    moved = Signal(object)                    
+    clicked = Signal(object)                  
 
     def __init__(self, clip: ClipItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -103,7 +103,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         self.setZValue(10)
 
         self.brush = QtGui.QBrush(QtGui.QColor(70, 120, 200, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(70, 120, 200, 180))  # gleiche Farbe → keine Ränder beim Zoomen
+        self.pen = QtGui.QPen(QtGui.QColor(70, 120, 200, 180))                                            
         self.pen.setWidth(0)
 
         self.snap_eps = 6.0
@@ -113,7 +113,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         self.update_geometry()
 
     def _refresh_label(self):
-        text = QtCore.QFileInfo(self.model.path).fileName() + f"  [{self.model.trim_in:.2f}–{self.model.safe_out():.2f}s]"
+        text = QtCore.QFileInfo(self.model.path).fileName() + f"  [{self.model.trim_in:.2f}-{self.model.safe_out():.2f}s]"
         self._label_cache.setText(text)
 
     def boundingRect(self) -> QtCore.QRectF:
@@ -130,7 +130,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
         p.setBrush(self.brush)
         if self.isSelected():
-            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)  # gelber Rand
+            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)               
             p.setPen(sel_pen)
         else:
             p.setPen(self.pen)
@@ -173,7 +173,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange:
             new_pos: QPointF = value
-            new_pos.setY(0)  # Clips immer bei y=0 halten
+            new_pos.setY(0)                              
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
 
@@ -181,7 +181,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
 
 class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     moved = Signal(object)
-    clicked = Signal(object)  # AudioItem
+    clicked = Signal(object)             
 
     def __init__(self, clip: AudioItem, pps: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -199,7 +199,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         self.setZValue(8)
 
         self.brush = QtGui.QBrush(QtGui.QColor(60, 180, 120, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(60, 180, 120, 180))  # gleiche Farbe → keine Striche
+        self.pen = QtGui.QPen(QtGui.QColor(60, 180, 120, 180))                                 
         self.pen.setWidth(0)
 
         self.snap_eps = 6.0
@@ -211,7 +211,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     def _refresh_label(self):
         base = QtCore.QFileInfo(self.model.path).fileName()
         self._label_cache.setText(
-            f"{base}  [{self.model.trim_in:.2f}–{self.model.safe_out():.2f}s]  {self.model.gain_db:+.1f} dB"
+            f"{base}  [{self.model.trim_in:.2f}-{self.model.safe_out():.2f}s]  {self.model.gain_db:+.1f} dB"
         )
 
     def boundingRect(self) -> QtCore.QRectF:
@@ -273,7 +273,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange:
             new_pos: QPointF = value
-            # WICHTIG: y=0 lassen, weil der Track-Offset im boundingRect steckt
+                                                                               
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
 
@@ -281,7 +281,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
 
 
 
-# ------------------------------ Scene/View --------------------------------------
+                                                                                  
 class TimelineScene(QtWidgets.QGraphicsScene):
     def __init__(self, pps: float):
         super().__init__()
@@ -324,7 +324,7 @@ class TimelineScene(QtWidgets.QGraphicsScene):
                 it.pps = pps
                 it.update_geometry()
         self.invalidate(self.sceneRect())
-        # NEU: Playhead korrekt repositionieren
+                                               
         self.update_playhead_x(self.parent().current_time if hasattr(self.parent(), "current_time") else 0.0)
 
 
@@ -344,7 +344,7 @@ class TimelineScene(QtWidgets.QGraphicsScene):
 
 
 class TimelineView(QtWidgets.QGraphicsView):
-    time_changed = Signal(float)  # seconds
+    time_changed = Signal(float)           
 
     def __init__(self, scene: TimelineScene):
         super().__init__(scene)
@@ -387,12 +387,12 @@ class TimelineView(QtWidgets.QGraphicsView):
 
         scene.update_pps(pps1)
 
-        # Scroll-Korrektur
+                          
         new_x = t * pps1
         dx = new_x - cursor_scene.x()
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + int(dx))
 
-        # NEU: Playhead exakt auf aktueller Zeit
+                                                
         scene.update_playhead_x(self.window().current_time)
 
 

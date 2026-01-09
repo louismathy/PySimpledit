@@ -1,4 +1,4 @@
-# audio_engine.py
+                 
 import sounddevice as sd
 import numpy as np
 
@@ -10,7 +10,7 @@ class AudioEngine:
         self.latency = latency
         self._timeline_cb = None
         self._playing = False
-        self._time = 0.0  # aktuelle Timeline-Zeit in Sekunden
+        self._time = 0.0                                      
 
         self._stream = sd.OutputStream(
             samplerate=self.sr,
@@ -22,7 +22,7 @@ class AudioEngine:
         )
 
     def set_timeline_callback(self, fn):
-        """fn(t0: float, nframes: int) -> np.ndarray shape (nframes, channels) float32"""
+                                                                                         
         self._timeline_cb = fn
 
     def play(self, start_time: float):
@@ -48,10 +48,10 @@ class AudioEngine:
     def time(self) -> float:
         return float(self._time)
 
-    # --- PortAudio callback ---
+                                
     def _callback(self, outdata, frames, time_info, status):
         if status:
-            # optional: print(status)
+                                     
             pass
         if not self._playing or self._timeline_cb is None:
             outdata[:] = 0
@@ -61,19 +61,21 @@ class AudioEngine:
             if not isinstance(buf, np.ndarray):
                 outdata[:] = 0
             else:
-                # shape guard
+                             
                 if buf.ndim == 1:
                     buf = np.stack([buf] * self.ch, axis=-1)
                 if buf.shape[1] != self.ch:
-                    # channels mismatch -> simple trim/expand
+                                                             
                     if buf.shape[1] > self.ch:
                         buf = buf[:, :self.ch]
                     else:
-                        # expand mono to stereo etc.
+                                                    
                         rep = self.ch - buf.shape[1]
                         buf = np.concatenate([buf] + [buf[:, :1]] * rep, axis=1)
+                if buf.dtype != np.float32:
+                    buf = buf.astype(np.float32, copy=False)
                 if buf.shape[0] != frames:
-                    # pad or trim
+                                 
                     if buf.shape[0] < frames:
                         pad = np.zeros((frames - buf.shape[0], self.ch), dtype=np.float32)
                         buf = np.concatenate([buf, pad], axis=0)

@@ -27,6 +27,6 @@ class BrightnessEffect(BaseEffect):
 
     def apply_qimage(self, img: "QImage") -> "QImage":
         factor = float(self.params.get("factor", 1.2))
-        arr, _ = to_rgba_np(img)  # BGRA
+        arr, _ = to_rgba_np(img)        
         arr[..., 0:3] = np.clip(arr[..., 0:3].astype(np.float32) * factor, 0, 255).astype(np.uint8)
         return from_rgba_np(arr)

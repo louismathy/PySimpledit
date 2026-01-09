@@ -3,33 +3,36 @@ REM ==============================
 REM Simpledit Starter (Windows)
 REM ==============================
 
-REM Stelle sicher, dass wir im Ordner der BAT-Datei sind
+REM Ensure we run from the BAT file folder
 cd /d "%~dp0"
 
-echo [Simpledit] Starte Setup ...
+echo [Simpledit] Starting setup ...
 
-REM Virtuelle Umgebung prüfen/erstellen
+REM Check/create virtual environment
 if not exist venv (
-    echo [Simpledit] Erstelle virtuelle Umgebung ...
+    echo [Simpledit] Creating virtual environment ...
     python -m venv venv
 )
 
-REM Aktivieren der venv
+REM Activate venv
 call venv\Scripts\activate
 
-REM Pakete installieren/aktualisieren
-echo [Simpledit] Installiere Abhängigkeiten ...
-pip install --upgrade pip
-pip install --upgrade PySide6 moviepy python-vlc
+REM Install/update packages
+echo [Simpledit] Installing dependencies ...
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
-REM Hinweis zu ffmpeg
-echo.
-echo [Hinweis] Stelle sicher, dass ffmpeg installiert und im PATH ist.
-echo           (Download: https://ffmpeg.org/download.html)
-echo.
+REM ffmpeg note (needed for moviepy/pydub)
+where ffmpeg >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [Note] ffmpeg not found. Please install and add to PATH.
+    echo        Download: https://ffmpeg.org/download.html
+    echo.
+)
 
-REM Start der App
-echo [Simpledit] Starte Editor ...
+REM Start the app
+echo [Simpledit] Starting editor ...
 python src/main.py
 
 pause

@@ -18,12 +18,12 @@ class MirrorEffect(BaseEffect):
         import numpy as np
 
         def _mirror(img):
-            # horizontal flip
+                             
             return np.ascontiguousarray(img[:, ::-1, :])
 
         return clip.image_transform(_mirror)
 
     def apply_qimage(self, img: "QImage") -> "QImage":
         arr, _ = to_rgba_np(img)
-        arr = np.ascontiguousarray(arr[:, ::-1, :])  # horizontal flip
+        arr = np.ascontiguousarray(arr[:, ::-1, :])                   
         return from_rgba_np(arr)

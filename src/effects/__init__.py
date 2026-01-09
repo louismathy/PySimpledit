@@ -1,13 +1,13 @@
-# effects/__init__.py
+                     
 from .base import BaseEffect, EffectConfig
 from .registry import build_chain
 from . import brightness, bw, contrast, invert, mirror, sepia
 
 def apply_chain_qimage(img, configs):
-    """Wendet die Effektkette auf ein QImage an."""
+                                                   
     from dataclasses import asdict
     out = img
-    # Falls configs Dicts sind → in EffectConfig casten
+                                                       
     cfg_objs = []
     for cfg in configs or []:
         if isinstance(cfg, dict):

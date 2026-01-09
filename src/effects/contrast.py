@@ -18,7 +18,7 @@ class ContrastEffect(BaseEffect):
         factor = float(self.params.get("factor", 1.2))
 
         def _contrast(img):
-            # MoviePy liefert RGB[A]
+                                    
             arr = img.astype(np.float32, copy=True)
             arr[..., :3] = np.clip((arr[..., :3] - 128.0) * factor + 128.0, 0, 255)
             return arr.astype(np.uint8)
@@ -27,7 +27,7 @@ class ContrastEffect(BaseEffect):
 
     def apply_qimage(self, img: "QImage") -> "QImage":
         factor = float(self.params.get("factor", 1.2))
-        arr, _ = to_rgba_np(img)  # QImage BGRA
+        arr, _ = to_rgba_np(img)               
         rgb = arr[..., 0:3].astype(np.float32)
         rgb = np.clip((rgb - 128.0) * factor + 128.0, 0, 255).astype(np.uint8)
         arr[..., 0:3] = rgb
