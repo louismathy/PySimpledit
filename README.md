@@ -22,11 +22,6 @@ timeline scheduling, preview vs. render separation, and audio/video sync.
 - Effects are defined declaratively to support serialization and future backends
 - Parallel rendering was intentionally avoided to reduce I/O contention
 
-## Scope
-- ~3k LOC total, primarily backend / core logic
-- No web UI by design
-- No browser-side rendering
-
 ## Requirements
 - Python 3.10+
 - FFmpeg available in PATH (required by MoviePy)
