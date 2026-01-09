@@ -14,7 +14,6 @@ timeline scheduling, preview vs. render separation, and audio/video sync.
 - Custom audio engine with block-based block mixing
 - Declarative, serializable effect chains
 - O(log n) clip lookup during playback
-- Minimal UI layer (~500 LOC), core logic in backend modules
 
 ## Design Decisions
 - MoviePy + FFmpeg for stability and reproducibility
