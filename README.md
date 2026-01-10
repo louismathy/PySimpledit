@@ -1,13 +1,32 @@
 # Simpledit
 
-Simpledit is a lightweight timeline editor built with PySide6 and MoviePy.
+Simpledit is a lightweight, timeline-based video editor written in Python.
+It focuses on a clean rendering core, deterministic playback, and explicit
+audio/video synchronization rather than UI complexity.
+
+The project was built to explore real-world media processing problems such as
+timeline scheduling, preview vs. render separation, and audio/video sync.
+
+
+## Architecture Highlights
+- Timeline-based deterministic playback model
+- Separate preview and render pipelines
+- Custom audio engine with block-based block mixing
+- Declarative, serializable effect chains
+- O(log n) clip lookup during playback
+
+## Design Decisions
+- MoviePy + FFmpeg for stability and reproducibility
+- Preview rendering is throttled and decoupled from final export
+- Effects are defined declaratively to support serialization and future backends
+- Parallel rendering was intentionally avoided to reduce I/O contention
 
 ## Requirements
-
-- Python 3.10+ (recommended)
-- ffmpeg in PATH (required for media decoding via moviepy/pydub)
+- Python 3.10+
+- FFmpeg available in PATH (required by MoviePy)
 
 ## Install and Run (Windows)
+
 
 1. Open a terminal in the project folder.
 2. Run the launcher:
