@@ -118,12 +118,24 @@ class EditorPlaybackMixin:
             local = c.trim_in + (self.current_time - c.start_time)
             self._request_frame(c.path, local)
             self._last_preview_at_ms = now_ms
+        elif not c and need_preview:
+            self._set_black_preview()
+            self._last_preview_at_ms = now_ms
 
         if self.audio_enabled and not from_player:
             self.audio_engine.seek(self.current_time)
 
     def _request_frame(self, path: str, t_local: float):
         self.frame_thread.request(path, t_local, self.video_widget.width(), self.video_widget.height(), self.preview_height)
+
+    def _set_black_preview(self):
+        w = max(1, self.video_widget.width())
+        h = max(1, self.video_widget.height())
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_RGB32)
+        img.fill(QtGui.QColor(0, 0, 0))
+        pix = QtGui.QPixmap.fromImage(img)
+        if isinstance(self.video_widget, QtWidgets.QLabel):
+            self.video_widget.setPixmap(pix)
 
     def _on_frame_ready(self, qimg: QtGui.QImage):
         img = qimg
