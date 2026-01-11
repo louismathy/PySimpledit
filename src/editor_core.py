@@ -1,6 +1,6 @@
 from typing import Optional
 
-from PySide6 import QtGui
+from PySide6 import QtGui, QtWidgets
 
 from models import ClipItem, AudioItem
 

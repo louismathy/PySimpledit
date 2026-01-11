@@ -203,8 +203,6 @@ class EditorMainWindow(
 
         tb.addSeparator()
         self.action_theme_toggle = tb.addAction("Dark Mode")
-        self.action_theme_toggle.setCheckable(True)
-        self.action_theme_toggle.setChecked(True)
         self._set_theme_icon()
         self.action_theme_toggle.triggered.connect(self._toggle_theme_mode)
 
@@ -394,6 +392,15 @@ class EditorMainWindow(
                     border-radius: 10px;
                     padding: 6px 8px;
                 }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: right center;
+                    width: 26px;
+                    border-left: 1px solid #2A3345;
+                    border-top-right-radius: 10px;
+                    border-bottom-right-radius: 10px;
+                    background: #1B2130;
+                }
                 QPushButton {
                     background: #1E6CFF;
                     color: #FFFFFF;
@@ -539,6 +546,15 @@ class EditorMainWindow(
                     border-radius: 10px;
                     padding: 6px 8px;
                 }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: right center;
+                    width: 26px;
+                    border-left: 1px solid #E1E7F2;
+                    border-top-right-radius: 10px;
+                    border-bottom-right-radius: 10px;
+                    background: #FFFFFF;
+                }
                 QPushButton {
                     background: #1E6CFF;
                     color: #FFFFFF;
@@ -613,13 +629,20 @@ class EditorMainWindow(
         self.timeline.set_theme(mode)
 
     def _toggle_theme_mode(self):
-        self._theme_mode = "dark" if self.action_theme_toggle.isChecked() else "light"
+        self._theme_mode = "light" if self._theme_mode == "dark" else "dark"
         self._apply_theme(self._theme_mode)
         self._set_theme_icon()
+        self._set_theme_label()
 
     def _set_theme_icon(self):
         icon_name = "moon.png" if self._theme_mode == "light" else "sun.png"
         self._set_action_icon(self.action_theme_toggle, icon_name)
+        self._set_theme_label()
+
+    def _set_theme_label(self):
+        label = "Light Mode" if self._theme_mode == "dark" else "Dark Mode"
+        self.action_theme_toggle.setText(label)
+
 
     def _apply_dialog_theme(self, dlg: QtWidgets.QDialog):
         if self._theme_mode == "dark":
