@@ -15,6 +15,9 @@ class EditorProjectMixin:
             self.clips.clear(); self.audios.clear()
             self.graphics_by_clip.clear(); self.audio_graphics_by_clip.clear()
             self.scene.clear(); self.scene = TimelineScene(self.pps); self.timeline.setScene(self.scene)
+            if hasattr(self, "_theme_mode"):
+                self.scene.set_theme(self._theme_mode)
+                self.timeline.set_theme(self._theme_mode)
             self.project_path = None
             self.refresh_clip_list_labels(); self.refresh_audio_list_labels(); self._rebuild_sorted()
             self._on_timeline_changed(hard=True)
@@ -30,6 +33,9 @@ class EditorProjectMixin:
             self.pps = float(data.get("pps", self.pps))
             self.graphics_by_clip.clear(); self.audio_graphics_by_clip.clear()
             self.scene.clear(); self.scene = TimelineScene(self.pps); self.timeline.setScene(self.scene)
+            if hasattr(self, "_theme_mode"):
+                self.scene.set_theme(self._theme_mode)
+                self.timeline.set_theme(self._theme_mode)
             for c in self.clips:
                 gi = self.scene.add_clip_item(c)
                 gi.moved.connect(self.on_clip_moved)

@@ -27,8 +27,9 @@ class TimeRuler(QtWidgets.QGraphicsItem):
 
     def paint(self, p: QtGui.QPainter, option, widget=None):
         rect = option.exposedRect
-        p.fillRect(rect, QtGui.QColor(28, 28, 32))
-        p.setPen(QtGui.QColor(90, 90, 95))
+        colors = getattr(self.scene(), "theme_colors", {})
+        p.fillRect(rect, colors.get("ruler_bg", QtGui.QColor(245, 247, 251)))
+        p.setPen(colors.get("ruler_minor", QtGui.QColor(206, 216, 236)))
 
         s_per_100px = 100.0 / max(1e-6, self.pps)
         if s_per_100px < 0.5:
@@ -61,7 +62,7 @@ class TimeRuler(QtWidgets.QGraphicsItem):
             t += minor
 
                       
-        p.setPen(QtGui.QColor(200, 200, 205))
+        p.setPen(colors.get("ruler_major", QtGui.QColor(70, 78, 96)))
         first_major = math.floor(start_s / major) * major
         t = first_major
         while t <= end_s + major:
@@ -75,7 +76,7 @@ class Playhead(QtWidgets.QGraphicsLineItem):
     def __init__(self):
         super().__init__()
         self.setZValue(90)
-        pen = QtGui.QPen(QtGui.QColor(255, 70, 70))
+        pen = QtGui.QPen(QtGui.QColor(255, 95, 95))
         pen.setWidthF(1.5)
         self.setPen(pen)
 
@@ -102,9 +103,10 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         self.setCacheMode(QtWidgets.QGraphicsItem.ItemCoordinateCache)
         self.setZValue(10)
 
-        self.brush = QtGui.QBrush(QtGui.QColor(70, 120, 200, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(70, 120, 200, 180))                                            
+        self.brush = QtGui.QBrush()
+        self.pen = QtGui.QPen()
         self.pen.setWidth(0)
+        self.apply_theme()
 
         self.snap_eps = 6.0
         self._label_cache = QtGui.QStaticText()
@@ -130,12 +132,12 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
         p.setBrush(self.brush)
         if self.isSelected():
-            sel_pen = QtGui.QPen(QtGui.QColor(255, 200, 0), 2.0)               
+            sel_pen = QtGui.QPen(self._theme_color("clip_selected", QtGui.QColor(30, 108, 255)), 2.0)
             p.setPen(sel_pen)
         else:
             p.setPen(self.pen)
         p.drawRect(r)
-        p.setPen(Qt.white)
+        p.setPen(self._theme_color("text", QtGui.QColor(27, 31, 42)))
         p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
 
     def mousePressEvent(self, e):
@@ -177,6 +179,15 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
 
+    def _theme_color(self, key: str, fallback: QtGui.QColor) -> QtGui.QColor:
+        colors = getattr(self.scene(), "theme_colors", {}) if self.scene() else {}
+        return colors.get(key, fallback)
+
+    def apply_theme(self):
+        self.brush = QtGui.QBrush(self._theme_color("clip_fill", QtGui.QColor(210, 230, 255, 200)))
+        self.pen = QtGui.QPen(self._theme_color("clip_outline", QtGui.QColor(125, 165, 230, 200)))
+        self.pen.setWidth(0)
+
 
 
 class AudioGraphicsItem(QtWidgets.QGraphicsObject):
@@ -198,9 +209,10 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         self.setCacheMode(QtWidgets.QGraphicsItem.ItemCoordinateCache)
         self.setZValue(8)
 
-        self.brush = QtGui.QBrush(QtGui.QColor(60, 180, 120, 180))
-        self.pen = QtGui.QPen(QtGui.QColor(60, 180, 120, 180))                                 
+        self.brush = QtGui.QBrush()
+        self.pen = QtGui.QPen()
         self.pen.setWidth(0)
+        self.apply_theme()
 
         self.snap_eps = 6.0
         self._label_cache = QtGui.QStaticText()
@@ -230,11 +242,11 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         p.setPen(self.pen)
         p.drawRect(r)
         if self.isSelected():
-            sel_pen = QtGui.QPen(QtGui.QColor(255, 215, 0), 2.5, Qt.SolidLine)
+            sel_pen = QtGui.QPen(self._theme_color("clip_selected", QtGui.QColor(30, 108, 255)), 2.5, Qt.SolidLine)
             p.setPen(sel_pen)
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawRect(r)
-        p.setPen(Qt.white)
+        p.setPen(self._theme_color("text", QtGui.QColor(27, 31, 42)))
         p.drawStaticText(r.left() + 8, r.top() + 6, self._label_cache)
 
     def mousePressEvent(self, e):
@@ -277,6 +289,15 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
             return QPointF(self._snap_x(new_pos.x()), 0)
         return super().itemChange(change, value)
 
+    def _theme_color(self, key: str, fallback: QtGui.QColor) -> QtGui.QColor:
+        colors = getattr(self.scene(), "theme_colors", {}) if self.scene() else {}
+        return colors.get(key, fallback)
+
+    def apply_theme(self):
+        self.brush = QtGui.QBrush(self._theme_color("audio_fill", QtGui.QColor(203, 238, 225, 200)))
+        self.pen = QtGui.QPen(self._theme_color("audio_outline", QtGui.QColor(110, 190, 150, 200)))
+        self.pen.setWidth(0)
+
 
 
 
@@ -287,7 +308,8 @@ class TimelineScene(QtWidgets.QGraphicsScene):
         super().__init__()
         self.pps = pps
         self.setSceneRect(0, 0, 20000, AUDIO_TRACK_Y + AUDIO_TRACK_H + 40)
-        self.setBackgroundBrush(QtGui.QColor(20, 20, 24))
+        self.theme_colors = {}
+        self.set_theme("light")
 
         self.ruler = TimeRuler(self.pps)
         self.addItem(self.ruler)
@@ -297,6 +319,39 @@ class TimelineScene(QtWidgets.QGraphicsScene):
         self.update_playhead_x(0)
 
         self.snap_targets: List[float] = [0.0]
+
+    def set_theme(self, mode: str):
+        if mode == "dark":
+            self.theme_colors = {
+                "scene_bg": QtGui.QColor(20, 24, 32),
+                "ruler_bg": QtGui.QColor(24, 28, 36),
+                "ruler_minor": QtGui.QColor(54, 62, 78),
+                "ruler_major": QtGui.QColor(210, 220, 235),
+                "text": QtGui.QColor(230, 237, 247),
+                "clip_fill": QtGui.QColor(40, 74, 120, 120),
+                "clip_outline": QtGui.QColor(80, 130, 210, 180),
+                "audio_fill": QtGui.QColor(35, 100, 80, 120),
+                "audio_outline": QtGui.QColor(70, 160, 130, 180),
+                "clip_selected": QtGui.QColor(110, 170, 255),
+            }
+        else:
+            self.theme_colors = {
+                "scene_bg": QtGui.QColor(245, 247, 251),
+                "ruler_bg": QtGui.QColor(245, 247, 251),
+                "ruler_minor": QtGui.QColor(206, 216, 236),
+                "ruler_major": QtGui.QColor(70, 78, 96),
+                "text": QtGui.QColor(27, 31, 42),
+                "clip_fill": QtGui.QColor(210, 230, 255, 200),
+                "clip_outline": QtGui.QColor(125, 165, 230, 200),
+                "audio_fill": QtGui.QColor(203, 238, 225, 200),
+                "audio_outline": QtGui.QColor(110, 190, 150, 200),
+                "clip_selected": QtGui.QColor(30, 108, 255),
+            }
+        self.setBackgroundBrush(self.theme_colors["scene_bg"])
+        for it in self.items():
+            if isinstance(it, (ClipGraphicsItem, AudioGraphicsItem)):
+                it.apply_theme()
+        self.invalidate(self.sceneRect())
 
     def build_snap_targets(self, exclude_item=None):
         targets = [0.0]
@@ -352,6 +407,55 @@ class TimelineView(QtWidgets.QGraphicsView):
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.MinimalViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.set_theme("light")
+
+    def set_theme(self, mode: str):
+        if mode == "dark":
+            self.setStyleSheet(
+                """
+                QGraphicsView {
+                    background: #141821;
+                    border: 1px solid #2A3345;
+                    border-radius: 12px;
+                }
+                QScrollBar:horizontal {
+                    background: transparent;
+                    height: 10px;
+                    margin: 4px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: #3A455E;
+                    border-radius: 5px;
+                    min-width: 20px;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                """
+            )
+        else:
+            self.setStyleSheet(
+                """
+                QGraphicsView {
+                    background: #F5F7FB;
+                    border: 1px solid #E3E8F2;
+                    border-radius: 12px;
+                }
+                QScrollBar:horizontal {
+                    background: transparent;
+                    height: 10px;
+                    margin: 4px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: #D2DBEF;
+                    border-radius: 5px;
+                    min-width: 20px;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                """
+            )
         self.setCacheMode(QtWidgets.QGraphicsView.CacheBackground)
         self.setOptimizationFlag(QtWidgets.QGraphicsView.DontSavePainterState, True)
         self.setOptimizationFlag(QtWidgets.QGraphicsView.DontAdjustForAntialiasing, True)

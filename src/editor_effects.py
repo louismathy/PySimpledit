@@ -1,6 +1,6 @@
 from typing import Optional
 
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore, QtGui
 from PySide6.QtCore import Qt
 
 from models import ClipItem
@@ -34,6 +34,7 @@ class EditorEffectsMixin:
             label = AVAILABLE_EFFECTS.get(t, f"Unknown ({t})")
             item = QtWidgets.QListWidgetItem(label)
             item.setData(Qt.UserRole, ec)
+            item.setSizeHint(QtCore.QSize(0, 32))
             self.list_effects.addItem(item)
 
         self._update_effect_buttons_enabled()
@@ -95,3 +96,62 @@ class EditorEffectsMixin:
             self._refresh_effects_ui()
             self.list_effects.setCurrentRow(row + 1)
             self._apply_effects_preview_refresh()
+
+    def _on_effect_item_clicked(self, item: QtWidgets.QListWidgetItem):
+        cfg = item.data(Qt.UserRole)
+        if not cfg:
+            return
+        self._show_effect_preview(cfg, item)
+
+    def _show_effect_preview(self, cfg: dict, item: QtWidgets.QListWidgetItem):
+        row = self.list_effects.row(item)
+        if row >= 0:
+            self.list_effects.setCurrentRow(row)
+        from effects import apply_chain_qimage
+
+        base_img = self._current_preview_image()
+        if base_img is None:
+            base_img = self._placeholder_preview_image()
+
+        try:
+            img = apply_chain_qimage(base_img, [cfg])
+        except Exception:
+            img = base_img
+
+        pix = QtGui.QPixmap.fromImage(img)
+        pix = pix.scaled(220, 124, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+
+        menu = QtWidgets.QMenu(self.list_effects)
+        menu.setFont(QtGui.QFont("SF Pro Display", 9))
+        action = QtWidgets.QWidgetAction(menu)
+        label = QtWidgets.QLabel()
+        label.setPixmap(pix)
+        label.setFixedSize(pix.size())
+        action.setDefaultWidget(label)
+        menu.addAction(action)
+        rect = self.list_effects.visualItemRect(item)
+        anchor = self.list_effects.viewport().mapToGlobal(rect.bottomLeft())
+        menu.popup(anchor)
+
+    def _current_preview_image(self) -> QtGui.QImage | None:
+        if hasattr(self, "_last_preview_qimg"):
+            img = getattr(self, "_last_preview_qimg")
+            if isinstance(img, QtGui.QImage) and not img.isNull():
+                return img
+        if isinstance(self.video_widget, QtWidgets.QLabel):
+            pix = self.video_widget.pixmap()
+            if pix is not None:
+                return pix.toImage()
+        return None
+
+    def _placeholder_preview_image(self) -> QtGui.QImage:
+        w = max(220, self.video_widget.width())
+        h = max(124, self.video_widget.height())
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_RGB32)
+        img.fill(QtGui.QColor(244, 247, 251))
+        p = QtGui.QPainter(img)
+        p.setPen(QtGui.QColor(140, 150, 168))
+        p.setFont(QtGui.QFont("SF Pro Display", 10))
+        p.drawText(img.rect(), QtCore.Qt.AlignCenter, "No preview")
+        p.end()
+        return img

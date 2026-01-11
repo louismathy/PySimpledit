@@ -1,10 +1,11 @@
 import os
 from typing import Optional
 
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore, QtGui
 
 from models import ClipItem, AudioItem
 from timeline import ClipGraphicsItem, AudioGraphicsItem
+from editor_thumbnails import ThumbnailWorker
 
 
 class EditorSelectionMixin:
@@ -26,9 +27,18 @@ class EditorSelectionMixin:
         self.list_clips.blockSignals(True)
         self.list_clips.clear()
         for c in self.clips:
-            self.list_clips.addItem(
-                f"{os.path.basename(c.path)}  t={c.start_time:.2f}s  [{c.trim_in:.2f}-{c.safe_out():.2f}s]"
-            )
+            label = f"{os.path.basename(c.path)}  t={c.start_time:.2f}s  [{c.trim_in:.2f}-{c.safe_out():.2f}s]"
+            item = QtWidgets.QListWidgetItem(label)
+            thumb_key = self._thumb_key(c)
+            item.setData(QtCore.Qt.UserRole, thumb_key)
+            item.setSizeHint(QtCore.QSize(0, 72))
+            cached = self._thumb_cache.get(thumb_key)
+            if cached:
+                item.setIcon(QtGui.QIcon(cached))
+            else:
+                item.setIcon(QtGui.QIcon(self._placeholder_thumbnail()))
+                self._queue_thumbnail(c)
+            self.list_clips.addItem(item)
         self.list_clips.blockSignals(False)
 
         if selected and selected in self.clips:
@@ -47,6 +57,35 @@ class EditorSelectionMixin:
 
         if selected and selected in self.audios:
             self.list_audio.setCurrentRow(self.audios.index(selected))
+
+    def _thumb_key(self, clip: ClipItem) -> str:
+        return f"{clip.path}|{clip.trim_in:.3f}"
+
+    def _placeholder_thumbnail(self) -> QtGui.QPixmap:
+        size = self.list_clips.iconSize()
+        img = QtGui.QImage(size, QtGui.QImage.Format_RGB32)
+        img.fill(QtGui.QColor("#E9EEF7"))
+        pix = QtGui.QPixmap.fromImage(img)
+        return pix
+
+    def _queue_thumbnail(self, clip: ClipItem):
+        key = self._thumb_key(clip)
+        if key in self._thumb_inflight:
+            return
+        self._thumb_inflight.add(key)
+        worker = ThumbnailWorker(key, clip.path, clip.trim_in, self.list_clips.iconSize(), self._thumb_signals)
+        self._thumb_pool.start(worker)
+
+    def _on_thumbnail_ready(self, key: str, img: QtGui.QImage):
+        self._thumb_inflight.discard(key)
+        if img.isNull():
+            return
+        pix = QtGui.QPixmap.fromImage(img)
+        self._thumb_cache[key] = pix
+        for i in range(self.list_clips.count()):
+            item = self.list_clips.item(i)
+            if item and item.data(QtCore.Qt.UserRole) == key:
+                item.setIcon(QtGui.QIcon(pix))
 
     def on_select_clip(self, row: int):
         self._last_selection_kind = "clip"

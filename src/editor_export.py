@@ -15,6 +15,8 @@ from utils import make_subclip, make_audio_subclip, set_start_compat, set_audio_
 class EditorExportMixin:
     def on_open_render_settings(self):
         dlg = RenderSettingsDialog(self)
+        if hasattr(self, "_apply_dialog_theme"):
+            self._apply_dialog_theme(dlg)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.render_settings = dlg.get_settings()
 

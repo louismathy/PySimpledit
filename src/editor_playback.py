@@ -27,6 +27,10 @@ class EditorPlaybackMixin:
     def on_toggle_audio_enabled(self, checked: bool):
         self.audio_enabled = checked
         self.action_audio_toggle.setText("Audio: On" if checked else "Audio: Off")
+        if checked:
+            self._set_action_icon(self.action_audio_toggle, "audio_on.png")
+        else:
+            self._set_action_icon(self.action_audio_toggle, "audio_off.png")
         if not checked:
             self.audio_engine.pause()
         else:
@@ -42,6 +46,7 @@ class EditorPlaybackMixin:
 
             self.playing = not self.playing
             self.action_play.setText("Pause" if self.playing else "Play")
+            self._set_action_icon(self.action_play, "pause.png" if self.playing else "play.png")
 
             if self.playing:
                 self._last_tick_ns = time.perf_counter_ns()
@@ -133,12 +138,14 @@ class EditorPlaybackMixin:
         h = max(1, self.video_widget.height())
         img = QtGui.QImage(w, h, QtGui.QImage.Format_RGB32)
         img.fill(QtGui.QColor(0, 0, 0))
+        self._last_preview_qimg = img
         pix = QtGui.QPixmap.fromImage(img)
         if isinstance(self.video_widget, QtWidgets.QLabel):
             self.video_widget.setPixmap(pix)
 
     def _on_frame_ready(self, qimg: QtGui.QImage):
         img = qimg
+        self._last_preview_qimg = img
 
         c = self._clip_at_time(self.current_time)
         if c and getattr(c, "effects", None):
