@@ -10,6 +10,11 @@ from utils import fmt_time
 
 
 class EditorPlaybackMixin:
+    def step_frame(self, direction: int):
+        fps = self.preview_fps if self.preview_fps and self.preview_fps > 0 else 30
+        dt = 1.0 / fps
+        self.seek(self.current_time + (dt * direction), from_player=False)
+
     def on_preview_quality_changed(self, text: str):
         mapping = {"Auto": 0, "720p": 720, "540p": 540, "360p": 360, "240p": 240, "144p": 144}
         self.preview_height = mapping.get(text, 360)

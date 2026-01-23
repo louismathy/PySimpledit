@@ -748,3 +748,14 @@ class EditorMainWindow(
     def showEvent(self, event: QtGui.QShowEvent):
         super().showEvent(event)
         self.setWindowOpacity(1.0)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        if event.key() == Qt.Key_Left:
+            self.step_frame(-1)
+            event.accept()
+            return
+        if event.key() == Qt.Key_Right:
+            self.step_frame(1)
+            event.accept()
+            return
+        super().keyPressEvent(event)
