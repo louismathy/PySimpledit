@@ -158,6 +158,8 @@ class EditorPlaybackMixin:
         pix = QtGui.QPixmap.fromImage(img)
         if isinstance(self.video_widget, QtWidgets.QLabel):
             self.video_widget.setPixmap(pix)
+        if hasattr(self, "_maybe_refresh_effects_browser"):
+            self._maybe_refresh_effects_browser()
 
     def _on_frame_error(self, msg: str):
         if isinstance(self.video_widget, QtWidgets.QLabel):

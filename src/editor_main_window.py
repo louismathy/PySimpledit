@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from audio_engine import AudioEngine
 from editor_core import EditorCoreMixin
-from editor_effects import EditorEffectsMixin, AVAILABLE_EFFECTS
+from editor_effects import EditorEffectsMixin
 from editor_export import EditorExportMixin
 from editor_icons import load_tinted_icon
 from editor_playback import EditorPlaybackMixin
@@ -239,12 +239,29 @@ class EditorMainWindow(
         le = QtWidgets.QVBoxLayout(we)
         le.setContentsMargins(8, 8, 8, 8)
 
+        le.addWidget(QtWidgets.QLabel("Effects Browser (current frame):"))
+        self.list_effects_browser = QtWidgets.QListWidget()
+        self.list_effects_browser.setObjectName("effectsBrowser")
+        self.list_effects_browser.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.list_effects_browser.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
+        self.list_effects_browser.setViewMode(QtWidgets.QListView.IconMode)
+        self.list_effects_browser.setResizeMode(QtWidgets.QListView.Adjust)
+        self.list_effects_browser.setMovement(QtWidgets.QListView.Static)
+        self.list_effects_browser.setIconSize(QtCore.QSize(160, 90))
+        self.list_effects_browser.setGridSize(QtCore.QSize(180, 130))
+        self.list_effects_browser.setSpacing(10)
+        self.list_effects_browser.setUniformItemSizes(True)
+        le.addWidget(self.list_effects_browser, 2)
+
+        self.btn_eff_add = QtWidgets.QPushButton("Add Selected Effect")
+        le.addWidget(self.btn_eff_add)
+
         self.list_effects = QtWidgets.QListWidget()
         self.list_effects.setObjectName("effectsList")
         self.list_effects.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.list_effects.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
         self.list_effects.setSpacing(6)
-        le.addWidget(QtWidgets.QLabel("Clip Effects (top to bottom):"))
+        le.addWidget(QtWidgets.QLabel("Applied Effects (top to bottom):"))
         le.addWidget(self.list_effects, 1)
 
         row_btns = QtWidgets.QHBoxLayout()
@@ -257,22 +274,16 @@ class EditorMainWindow(
         row_btns.addWidget(self.btn_eff_remove)
         le.addLayout(row_btns)
 
-        row_add = QtWidgets.QHBoxLayout()
-        self.combo_eff_add = QtWidgets.QComboBox()
-        self.combo_eff_add.addItems(list(AVAILABLE_EFFECTS.values()))
-        self.btn_eff_add = QtWidgets.QPushButton("Add")
-        row_add.addWidget(self.combo_eff_add, 1)
-        row_add.addWidget(self.btn_eff_add)
-        le.addLayout(row_add)
-
         inspector.addTab(we, "Effects")
 
-        self.btn_eff_add.clicked.connect(self.on_effect_add)
+        self.btn_eff_add.clicked.connect(self.on_effect_add_from_browser)
         self.btn_eff_remove.clicked.connect(self.on_effect_remove)
         self.btn_eff_up.clicked.connect(self.on_effect_move_up)
         self.btn_eff_down.clicked.connect(self.on_effect_move_down)
         self.list_effects.itemClicked.connect(self._on_effect_item_clicked)
         self.list_effects.itemSelectionChanged.connect(self._update_effect_buttons_enabled)
+        self.list_effects_browser.itemSelectionChanged.connect(self._update_effect_buttons_enabled)
+        self.list_effects_browser.itemDoubleClicked.connect(self.on_effect_add_from_browser)
 
         splitter.addWidget(left_panel)
 
@@ -287,6 +298,7 @@ class EditorMainWindow(
 
         self._apply_theme("dark")
         self._setup_window_effects()
+        self._refresh_effects_ui()
 
         QShortcut(Qt.Key_Space, self, activated=self.on_toggle_play)
         QShortcut(Qt.Key_Delete, self, activated=self.on_remove)
@@ -383,6 +395,24 @@ class EditorMainWindow(
                 }
                 QListWidget#effectsList::item:selected {
                     background: #253452;
+                    color: #E6EDF7;
+                    border: 1px solid #1E6CFF;
+                }
+                QListWidget#effectsBrowser {
+                    background: #161B27;
+                    border: 1px solid #2A3345;
+                    border-radius: 12px;
+                    padding: 6px;
+                }
+                QListWidget#effectsBrowser::item {
+                    background: #1E2A40;
+                    color: #E6EDF7;
+                    border: 1px solid #2F3C55;
+                    border-radius: 10px;
+                    padding: 6px;
+                }
+                QListWidget#effectsBrowser::item:selected {
+                    background: #23324B;
                     color: #E6EDF7;
                     border: 1px solid #1E6CFF;
                 }
@@ -537,6 +567,24 @@ class EditorMainWindow(
                 }
                 QListWidget#effectsList::item:selected {
                     background: #DCE8FF;
+                    color: #1B1F2A;
+                    border: 1px solid #1E6CFF;
+                }
+                QListWidget#effectsBrowser {
+                    background: #FFFFFF;
+                    border: 1px solid #E3E8F2;
+                    border-radius: 12px;
+                    padding: 6px;
+                }
+                QListWidget#effectsBrowser::item {
+                    background: #F1F5FF;
+                    color: #1B1F2A;
+                    border: 1px solid #D6E2FF;
+                    border-radius: 10px;
+                    padding: 6px;
+                }
+                QListWidget#effectsBrowser::item:selected {
+                    background: #E1EBFF;
                     color: #1B1F2A;
                     border: 1px solid #1E6CFF;
                 }

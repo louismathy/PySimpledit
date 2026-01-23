@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 from PySide6 import QtWidgets, QtCore, QtGui
@@ -15,9 +16,6 @@ AVAILABLE_EFFECTS = {
     "mirror": "Mirror (Horizontal Flip)",
 }
 
-REVERSE_AVAILABLE_EFFECTS = {v: k for k, v in AVAILABLE_EFFECTS.items()}
-
-
 class EditorEffectsMixin:
     def _current_clip_or_none(self) -> Optional[ClipItem]:
         return self.current_clip()
@@ -27,6 +25,7 @@ class EditorEffectsMixin:
         self.list_effects.clear()
         if not c:
             self._update_effect_buttons_enabled()
+            self._refresh_effects_browser()
             return
 
         for ec in (c.effects or []):
@@ -38,6 +37,7 @@ class EditorEffectsMixin:
             self.list_effects.addItem(item)
 
         self._update_effect_buttons_enabled()
+        self._refresh_effects_browser()
 
     def _update_effect_buttons_enabled(self):
         has_sel = len(self.list_effects.selectedIndexes()) == 1
@@ -46,6 +46,10 @@ class EditorEffectsMixin:
         self.btn_eff_down.setEnabled(
             has_sel and 0 <= self.list_effects.currentRow() < (self.list_effects.count() - 1)
         )
+        if hasattr(self, "list_effects_browser"):
+            has_browser_sel = len(self.list_effects_browser.selectedIndexes()) == 1
+            has_clip = self._current_clip_or_none() is not None
+            self.btn_eff_add.setEnabled(has_browser_sel and has_clip)
 
     def _apply_effects_preview_refresh(self):
         c = self._clip_at_time(self.current_time)
@@ -53,12 +57,16 @@ class EditorEffectsMixin:
             local = c.trim_in + (self.current_time - c.start_time)
             self._request_frame(c.path, local)
 
-    def on_effect_add(self):
+    def on_effect_add_from_browser(self):
         c = self._current_clip_or_none()
         if not c:
             return
-        eff_label = self.combo_eff_add.currentText().strip()
-        eff_key = REVERSE_AVAILABLE_EFFECTS.get(eff_label)
+        if not hasattr(self, "list_effects_browser"):
+            return
+        item = self.list_effects_browser.currentItem()
+        if not item:
+            return
+        eff_key = item.data(Qt.UserRole)
         if not eff_key:
             return
         c.effects = (c.effects or []) + [{"type": eff_key, "params": {}}]
@@ -133,6 +141,72 @@ class EditorEffectsMixin:
         anchor = self.list_effects.viewport().mapToGlobal(rect.bottomLeft())
         menu.popup(anchor)
 
+    def _effects_browser_target_size(self) -> QtCore.QSize:
+        if hasattr(self, "list_effects_browser"):
+            size = self.list_effects_browser.iconSize()
+            if size.isValid() and size.width() > 0 and size.height() > 0:
+                return size
+        return QtCore.QSize(160, 90)
+
+    def _refresh_effects_browser(self):
+        if not hasattr(self, "list_effects_browser"):
+            return
+        from effects import apply_chain_qimage
+
+        current_key = None
+        current_item = self.list_effects_browser.currentItem()
+        if current_item:
+            current_key = current_item.data(Qt.UserRole)
+
+        if self._current_clip_or_none() is None:
+            base_img = self._placeholder_preview_image()
+        else:
+            base_img = self._current_preview_image()
+            if base_img is None:
+                base_img = self._placeholder_preview_image()
+
+        target = self._effects_browser_target_size()
+        self.list_effects_browser.clear()
+        for eff_key, label in AVAILABLE_EFFECTS.items():
+            cfg = {"type": eff_key, "params": {}}
+            try:
+                img = apply_chain_qimage(base_img, [cfg])
+            except Exception:
+                img = base_img
+            img = self._scale_and_crop_qimage(img, target)
+            pix = QtGui.QPixmap.fromImage(img)
+            item = QtWidgets.QListWidgetItem(label)
+            item.setData(Qt.UserRole, eff_key)
+            item.setIcon(QtGui.QIcon(pix))
+            item.setToolTip(label)
+            self.list_effects_browser.addItem(item)
+
+        if current_key:
+            for i in range(self.list_effects_browser.count()):
+                item = self.list_effects_browser.item(i)
+                if item.data(Qt.UserRole) == current_key:
+                    self.list_effects_browser.setCurrentItem(item)
+                    break
+
+    def _maybe_refresh_effects_browser(self):
+        if not hasattr(self, "list_effects_browser"):
+            return
+        interval = 0 if not getattr(self, "playing", False) else 400
+        now_ms = QtCore.QTime.currentTime().msecsSinceStartOfDay()
+        last_ms = getattr(self, "_effects_preview_last_ms", -9999)
+        if interval and now_ms - last_ms < interval:
+            return
+        self._effects_preview_last_ms = now_ms
+        self._refresh_effects_browser()
+
+    def _scale_and_crop_qimage(self, img: QtGui.QImage, target: QtCore.QSize) -> QtGui.QImage:
+        if img.isNull():
+            return img
+        scaled = img.scaled(target, QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation)
+        x = max(0, (scaled.width() - target.width()) // 2)
+        y = max(0, (scaled.height() - target.height()) // 2)
+        return scaled.copy(x, y, target.width(), target.height())
+
     def _current_preview_image(self) -> QtGui.QImage | None:
         if hasattr(self, "_last_preview_qimg"):
             img = getattr(self, "_last_preview_qimg")
@@ -145,6 +219,10 @@ class EditorEffectsMixin:
         return None
 
     def _placeholder_preview_image(self) -> QtGui.QImage:
+        asset_path = os.path.join(os.path.dirname(__file__), "assets", "preview", "effect_preview.jpg")
+        img = QtGui.QImage(asset_path)
+        if not img.isNull():
+            return img
         w = max(220, self.video_widget.width())
         h = max(124, self.video_widget.height())
         img = QtGui.QImage(w, h, QtGui.QImage.Format_RGB32)
