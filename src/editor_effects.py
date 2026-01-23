@@ -14,6 +14,7 @@ AVAILABLE_EFFECTS = {
     "brightness": "Brightness",
     "contrast": "Contrast",
     "mirror": "Mirror (Horizontal Flip)",
+    "gaussian_blur": "Gaussian Blur",
 }
 
 class EditorEffectsMixin:

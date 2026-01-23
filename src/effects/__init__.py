@@ -1,7 +1,7 @@
                      
 from .base import BaseEffect, EffectConfig
 from .registry import build_chain
-from . import brightness, bw, contrast, invert, mirror, sepia
+from . import brightness, bw, contrast, invert, mirror, sepia, gaussian_blur
 
 def apply_chain_qimage(img, configs):
                                                    
