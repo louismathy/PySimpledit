@@ -8,11 +8,25 @@ from models import ClipItem, AudioItem
 from utils import fmt_time
 
                                                                                 
-TRACK_H = 64.0
+VIDEO_TRACK_H = 64.0
+VIDEO_TRACK_GAP = 12.0
+VIDEO_TRACK_COUNT = 2
+MAX_VIDEO_LAYER = VIDEO_TRACK_COUNT - 1
 TRACK_Y = 40.0
 RULER_H = 32.0
-AUDIO_TRACK_Y = TRACK_Y + TRACK_H + 24.0
+AUDIO_TRACK_Y = TRACK_Y + (VIDEO_TRACK_COUNT * VIDEO_TRACK_H) + ((VIDEO_TRACK_COUNT - 1) * VIDEO_TRACK_GAP) + 24.0
 AUDIO_TRACK_H = 40.0
+
+
+def _layer_offset(layer: int) -> float:
+    layer = max(0, min(MAX_VIDEO_LAYER, int(layer)))
+    return (MAX_VIDEO_LAYER - layer) * (VIDEO_TRACK_H + VIDEO_TRACK_GAP)
+
+
+def _layer_from_offset(offset: float) -> int:
+    slots = [i * (VIDEO_TRACK_H + VIDEO_TRACK_GAP) for i in range(VIDEO_TRACK_COUNT)]
+    nearest_idx = min(range(len(slots)), key=lambda i: abs(offset - slots[i]))
+    return MAX_VIDEO_LAYER - nearest_idx
 
 
                                                                                 
@@ -124,8 +138,11 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def update_geometry(self):
         w = max(12.0, round(self.model.trimmed_length() * self.pps))
         self.prepareGeometryChange()
-        self._rect = QRectF(0, TRACK_Y, w, TRACK_H)
-        self.setPos(self.model.start_time * self.pps, 0)
+        self._rect = QRectF(0, TRACK_Y, w, VIDEO_TRACK_H)
+        layer = getattr(self.model, "layer", MAX_VIDEO_LAYER)
+        layer = max(0, min(MAX_VIDEO_LAYER, int(layer)))
+        self.model.layer = layer
+        self.setPos(self.model.start_time * self.pps, _layer_offset(layer))
 
     def paint(self, p: QtGui.QPainter, option, widget=None):
         r = self._rect
@@ -175,8 +192,11 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
     def itemChange(self, change, value):
         if change == QtWidgets.QGraphicsItem.ItemPositionChange:
             new_pos: QPointF = value
-            new_pos.setY(0)                              
-            return QPointF(self._snap_x(new_pos.x()), 0)
+            snapped_x = self._snap_x(new_pos.x())
+            layer = _layer_from_offset(new_pos.y())
+            snapped_y = _layer_offset(layer)
+            self.model.layer = layer
+            return QPointF(snapped_x, snapped_y)
         return super().itemChange(change, value)
 
     def _theme_color(self, key: str, fallback: QtGui.QColor) -> QtGui.QColor:
@@ -265,6 +285,7 @@ class AudioGraphicsItem(QtWidgets.QGraphicsObject):
         if self._dragging:
             self._dragging = False
             self.model.start_time = max(0.0, self.pos().x() / self.pps)
+            self.model.layer = _layer_from_offset(self.pos().y())
             self.moved.emit(self.model)
         if e.button() == Qt.LeftButton and not self._dragging:
             self.clicked.emit(self.model)

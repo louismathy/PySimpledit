@@ -54,15 +54,21 @@ class FramePreviewer(QtCore.QThread):
 
                                                                     
                 if wid > 0 and hei > 0:
-                    qimg_scaled = qimg.scaled(wid, hei, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-                    final = QtGui.QImage(wid, hei, QtGui.QImage.Format.Format_RGB32)
-                    final.fill(QtCore.Qt.black)
-                    painter = QtGui.QPainter(final)
-                    x = (wid - qimg_scaled.width()) // 2
-                    y = (hei - qimg_scaled.height()) // 2
-                    painter.drawImage(x, y, qimg_scaled)
-                    painter.end()
-                    qimg = final
+                    if qimg.width() != wid or qimg.height() != hei:
+                        qimg_scaled = qimg.scaled(
+                            wid, hei, QtCore.Qt.KeepAspectRatio, QtCore.Qt.FastTransformation
+                        )
+                        if qimg_scaled.width() == wid and qimg_scaled.height() == hei:
+                            qimg = qimg_scaled
+                        else:
+                            final = QtGui.QImage(wid, hei, QtGui.QImage.Format.Format_RGB32)
+                            final.fill(QtCore.Qt.black)
+                            painter = QtGui.QPainter(final)
+                            x = (wid - qimg_scaled.width()) // 2
+                            y = (hei - qimg_scaled.height()) // 2
+                            painter.drawImage(x, y, qimg_scaled)
+                            painter.end()
+                            qimg = final
 
                 self.frame_ready.emit(qimg)
 

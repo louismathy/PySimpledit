@@ -3,13 +3,13 @@ import numpy as np
 from audio_decode import AudioSource
 
 class _TrackBinding:
-    def __init__(self, path: str, trim_in: float, trim_out: float, start_time: float, gain_db: float, sr: int, ch: int):
+    def __init__(self, path: str, trim_in: float, trim_out: float, start_time: float, gain_db: float, src: AudioSource):
         self.path = path
         self.trim_in = float(trim_in)
         self.trim_out = float(trim_out)
         self.start_time = float(start_time)
         self.gain_db = float(gain_db)
-        self.src = AudioSource(path, target_sr=sr, channels=ch)
+        self.src = src
 
     def contains(self, t: float) -> bool:
                                    
@@ -58,6 +58,15 @@ class TimelineMixer:
         self._audios_ref = audios_ref
         self.sr = int(sample_rate)
         self.ch = int(channels)
+        self._src_cache: dict[tuple[str, int, int], AudioSource] = {}
+
+    def _get_source(self, path: str) -> AudioSource:
+        key = (path, self.sr, self.ch)
+        src = self._src_cache.get(key)
+        if src is None:
+            src = AudioSource(path, target_sr=self.sr, channels=self.ch)
+            self._src_cache[key] = src
+        return src
 
     def _active_bindings(self, t0: float, nframes: int):
         t1 = t0 + nframes / self.sr
@@ -69,16 +78,24 @@ class TimelineMixer:
                                                                                                           
             if (t0 < c.start_time + c.trimmed_length()) and (t1 > c.start_time):
                 binds.append(_TrackBinding(
-                    path=c.path, trim_in=c.trim_in, trim_out=c.safe_out(), start_time=c.start_time,
-                    gain_db=0.0, sr=self.sr, ch=self.ch
+                    path=c.path,
+                    trim_in=c.trim_in,
+                    trim_out=c.safe_out(),
+                    start_time=c.start_time,
+                    gain_db=0.0,
+                    src=self._get_source(c.path),
                 ))
 
                                
         for a in self._audios_ref():
             if (t0 < a.start_time + a.trimmed_length()) and (t1 > a.start_time):
                 binds.append(_TrackBinding(
-                    path=a.path, trim_in=a.trim_in, trim_out=a.safe_out(), start_time=a.start_time,
-                    gain_db=getattr(a, "gain_db", 0.0), sr=self.sr, ch=self.ch
+                    path=a.path,
+                    trim_in=a.trim_in,
+                    trim_out=a.safe_out(),
+                    start_time=a.start_time,
+                    gain_db=getattr(a, "gain_db", 0.0),
+                    src=self._get_source(a.path),
                 ))
         return binds
 

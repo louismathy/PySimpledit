@@ -68,30 +68,39 @@ class EditorExportMixin:
             QtWidgets.QMessageBox.critical(self, "Export error", str(e))
 
     def _render_moviepy_sequence(self):
-        ordered_v = self._sorted_by_start
-        v_segments = []
-        t_cursor = 0.0
-        for c in ordered_v:
-            if c.start_time > t_cursor + 1e-6:
-                gap = c.start_time - t_cursor
-                v_segments.append(ColorClip(size=(1280, 720), color=(0, 0, 0), duration=gap))
-                t_cursor += gap
-            base = VideoFileClip(c.path)
-            sub = make_subclip(base, c.trim_in, c.safe_out())
-            try:
-                effect_cfgs = [EffectConfig(**ec) for ec in (getattr(c, "effects", []) or [])]
-                for eff in build_chain(effect_cfgs):
-                    sub = eff.apply_moviepy(sub)
-            except Exception as _e:
-                print(_e)
-                pass
-            v_segments.append(sub)
-            t_cursor += c.trimmed_length()
-
-        if not v_segments:
+        clips = [c for c in self.clips if c.trimmed_length() > 1e-6]
+        if not clips:
             total = self.timeline_length()
             video = ColorClip(size=(1280, 720), color=(0, 0, 0), duration=max(0.1, total))
         else:
+            boundaries = {0.0}
+            for c in clips:
+                boundaries.add(c.start_time)
+                boundaries.add(c.start_time + c.trimmed_length())
+
+            times = sorted(boundaries)
+            v_segments = []
+            for t0, t1 in zip(times, times[1:]):
+                if t1 - t0 <= 1e-6:
+                    continue
+                t_mid = (t0 + t1) * 0.5
+                c = self._clip_at_time(t_mid)
+                if not c:
+                    v_segments.append(ColorClip(size=(1280, 720), color=(0, 0, 0), duration=t1 - t0))
+                    continue
+                base = VideoFileClip(c.path)
+                local_start = c.trim_in + (t0 - c.start_time)
+                local_end = local_start + (t1 - t0)
+                sub = make_subclip(base, local_start, local_end)
+                try:
+                    effect_cfgs = [EffectConfig(**ec) for ec in (getattr(c, "effects", []) or [])]
+                    for eff in build_chain(effect_cfgs):
+                        sub = eff.apply_moviepy(sub)
+                except Exception as _e:
+                    print(_e)
+                    pass
+                v_segments.append(sub)
+
             video = v_segments[0] if len(v_segments) == 1 else concatenate_videoclips(v_segments, method="compose")
 
         extra_audio_clips = []

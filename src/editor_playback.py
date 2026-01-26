@@ -1,4 +1,3 @@
-import bisect
 import time
 import traceback
 from typing import Optional
@@ -91,12 +90,18 @@ class EditorPlaybackMixin:
             self.seek(self.current_time + dt, from_player=True)
 
     def _clip_at_time(self, t: float) -> Optional[ClipItem]:
-        if not getattr(self, "_sorted_by_start", None): return None
-        i = bisect.bisect_right(self._sorted_starts, t) - 1
-        if i >= 0:
-            c = self._sorted_by_start[i]
-            if t < c.start_time + c.trimmed_length() - 1e-6: return c
-        return None
+        best = None
+        best_layer = -1
+        best_start = -1.0
+        for c in self.clips:
+            if t < c.start_time or t >= c.start_time + c.trimmed_length() - 1e-6:
+                continue
+            layer = getattr(c, "layer", 1)
+            if layer > best_layer or (layer == best_layer and c.start_time >= best_start):
+                best = c
+                best_layer = layer
+                best_start = c.start_time
+        return best
 
     def _audio_at_time(self, t: float) -> Optional[AudioItem]:
         if not getattr(self, "_sorted_audio_by_start", None): return None
@@ -136,7 +141,13 @@ class EditorPlaybackMixin:
             self.audio_engine.seek(self.current_time)
 
     def _request_frame(self, path: str, t_local: float):
-        self.frame_thread.request(path, t_local, self.video_widget.width(), self.video_widget.height(), self.preview_height)
+        w = self.video_widget.width()
+        h = self.video_widget.height()
+        req = (path, round(t_local, 4), w, h, self.preview_height)
+        if getattr(self, "_last_frame_req", None) == req:
+            return
+        self._last_frame_req = req
+        self.frame_thread.request(path, t_local, w, h, self.preview_height)
 
     def _set_black_preview(self):
         w = max(1, self.video_widget.width())
