@@ -20,7 +20,7 @@ class ClipItem:
     trim_in: float = 0.0
     trim_out: Optional[float] = None
     start_time: float = 0.0
-    layer: int = 1
+    layer: int = 0
     effects: List[EffectConfig] = field(default_factory=list)
 
     def safe_out(self) -> float:
