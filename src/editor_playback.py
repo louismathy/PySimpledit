@@ -1,5 +1,6 @@
 import time
 import traceback
+from dataclasses import replace
 from typing import Optional
 
 from PySide6 import QtWidgets, QtGui, QtCore
@@ -9,6 +10,24 @@ from utils import fmt_time
 
 
 class EditorPlaybackMixin:
+    def _text_render_size(self) -> tuple[int, int]:
+        settings = getattr(self, "render_settings", {})
+        res = settings.get("resolution", "Auto")
+        mapping = {
+            "720p": (1280, 720),
+            "1080p": (1920, 1080),
+            "1440p": (2560, 1440),
+            "4K": (3840, 2160),
+        }
+        return mapping.get(res, (1280, 720))
+
+    def _text_preview_font_size(self, clip: ClipItem, target_w: int, target_h: int) -> int:
+        export_w, export_h = self._text_render_size()
+        if export_w <= 0 or export_h <= 0:
+            return max(8, int(clip.text_size))
+        scale = min(target_w / export_w, target_h / export_h)
+        return max(8, int(round(clip.text_size * scale)))
+
     def step_frame(self, direction: int):
         fps = self.preview_fps if self.preview_fps and self.preview_fps > 0 else 30
         dt = 1.0 / fps
@@ -19,8 +38,23 @@ class EditorPlaybackMixin:
         self.preview_height = mapping.get(text, 360)
         c = self._clip_at_time(self.current_time)
         if c:
-            local = c.trim_in + (self.current_time - c.start_time)
-            self._request_frame(c.path, local)
+            if c.is_text():
+                base = self._clip_below_video_at_time(self.current_time, c.layer)
+                if base:
+                    local = base.trim_in + (self.current_time - base.start_time)
+                    w = self.video_widget.width()
+                    h = self.video_widget.height()
+                    req = (base.path, round(local, 4), w, h, self.preview_height)
+                    self._pending_text_overlay = c
+                    self._pending_text_overlay_req = req
+                    self._request_frame(base.path, local)
+                else:
+                    self._pending_text_overlay = None
+                    self._pending_text_overlay_req = None
+                    self._render_text_preview(c)
+            else:
+                local = c.trim_in + (self.current_time - c.start_time)
+                self._request_frame(c.path, local)
 
     def on_preview_fps_changed(self, text: str):
         try:
@@ -103,6 +137,40 @@ class EditorPlaybackMixin:
                 best_start = c.start_time
         return best
 
+    def _clip_below_at_time(self, t: float, top_layer: int) -> Optional[ClipItem]:
+        best = None
+        best_layer = -1
+        best_start = -1.0
+        for c in self.clips:
+            if t < c.start_time or t >= c.start_time + c.trimmed_length() - 1e-6:
+                continue
+            layer = getattr(c, "layer", 1)
+            if layer >= top_layer:
+                continue
+            if layer > best_layer or (layer == best_layer and c.start_time >= best_start):
+                best = c
+                best_layer = layer
+                best_start = c.start_time
+        return best
+
+    def _clip_below_video_at_time(self, t: float, top_layer: int) -> Optional[ClipItem]:
+        best = None
+        best_layer = -1
+        best_start = -1.0
+        for c in self.clips:
+            if c.is_text():
+                continue
+            if t < c.start_time or t >= c.start_time + c.trimmed_length() - 1e-6:
+                continue
+            layer = getattr(c, "layer", 1)
+            if layer >= top_layer:
+                continue
+            if layer > best_layer or (layer == best_layer and c.start_time >= best_start):
+                best = c
+                best_layer = layer
+                best_start = c.start_time
+        return best
+
     def _audio_at_time(self, t: float) -> Optional[AudioItem]:
         if not getattr(self, "_sorted_audio_by_start", None): return None
         i = bisect.bisect_right(self._sorted_audio_starts, t) - 1
@@ -130,8 +198,25 @@ class EditorPlaybackMixin:
                 need_preview = True
 
         if c and need_preview:
-            local = c.trim_in + (self.current_time - c.start_time)
-            self._request_frame(c.path, local)
+            if c.is_text():
+                base = self._clip_below_video_at_time(self.current_time, c.layer)
+                if base:
+                    local = base.trim_in + (self.current_time - base.start_time)
+                    w = self.video_widget.width()
+                    h = self.video_widget.height()
+                    req = (base.path, round(local, 4), w, h, self.preview_height)
+                    self._pending_text_overlay = c
+                    self._pending_text_overlay_req = req
+                    self._request_frame(base.path, local)
+                else:
+                    self._pending_text_overlay = None
+                    self._pending_text_overlay_req = None
+                    self._render_text_preview(c)
+            else:
+                self._pending_text_overlay = None
+                self._pending_text_overlay_req = None
+                local = c.trim_in + (self.current_time - c.start_time)
+                self._request_frame(c.path, local)
             self._last_preview_at_ms = now_ms
         elif not c and need_preview:
             self._set_black_preview()
@@ -149,6 +234,23 @@ class EditorPlaybackMixin:
         self._last_frame_req = req
         self.frame_thread.request(path, t_local, w, h, self.preview_height)
 
+    def _render_text_preview(self, clip: ClipItem):
+        from text_render import render_text_qimage
+        self._pending_text_overlay = None
+        self._pending_text_overlay_req = None
+        target_w = max(1, self.video_widget.width())
+        target_h = max(1, self.video_widget.height())
+        font_size = self._text_preview_font_size(clip, target_w, target_h)
+        img = render_text_qimage(
+            clip.text,
+            target_w,
+            target_h,
+            bg_color=clip.bg_color,
+            text_color=clip.text_color,
+            font_size=font_size,
+        )
+        self._on_frame_ready(img)
+
     def _set_black_preview(self):
         w = max(1, self.video_widget.width())
         h = max(1, self.video_widget.height())
@@ -161,6 +263,10 @@ class EditorPlaybackMixin:
 
     def _on_frame_ready(self, qimg: QtGui.QImage):
         img = qimg
+        pending = getattr(self, "_pending_text_overlay", None)
+        pending_req = getattr(self, "_pending_text_overlay_req", None)
+        if pending and pending_req == getattr(self, "_last_frame_req", None):
+            img = self._composite_text_on_image(img, pending)
         self._last_preview_qimg = img
 
         c = self._clip_at_time(self.current_time)
@@ -180,6 +286,25 @@ class EditorPlaybackMixin:
     def _on_frame_error(self, msg: str):
         if isinstance(self.video_widget, QtWidgets.QLabel):
             self.video_widget.setText(f"Frame could not be loaded:\n{msg}")
+
+    def _composite_text_on_image(self, base: QtGui.QImage, clip: ClipItem) -> QtGui.QImage:
+        from text_render import render_text_qimage
+        target_w = max(1, base.width())
+        target_h = max(1, base.height())
+        font_size = self._text_preview_font_size(clip, target_w, target_h)
+        text_img = render_text_qimage(
+            clip.text,
+            target_w,
+            target_h,
+            bg_color=clip.bg_color,
+            text_color=clip.text_color,
+            font_size=font_size,
+        )
+        out = QtGui.QImage(base)
+        painter = QtGui.QPainter(out)
+        painter.drawImage(0, 0, text_img)
+        painter.end()
+        return out
 
     def mark_in(self):
         c = self.current_clip()
@@ -214,7 +339,13 @@ class EditorPlaybackMixin:
             local = c.trim_in + (t - c.start_time); eps = 1e-4
             if c.trim_in + eps < local < c.safe_out() - eps:
                 old_out = c.safe_out(); c.trim_out = local
-                new_c = ClipItem(path=c.path, duration=c.duration, trim_in=local, trim_out=old_out, start_time=t)
+                new_c = replace(
+                    c,
+                    trim_in=local,
+                    trim_out=old_out,
+                    start_time=t,
+                    effects=list(c.effects or []),
+                )
                 self.clips.append(new_c)
                 gi = self.scene.add_clip_item(new_c)
                 gi.moved.connect(self.on_clip_moved)

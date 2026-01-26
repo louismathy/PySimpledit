@@ -5,7 +5,7 @@ from PySide6 import QtWidgets
 from moviepy import VideoFileClip, AudioFileClip
 
 from models import ClipItem, AudioItem
-from timeline import TimelineScene, ClipGraphicsItem, AudioGraphicsItem
+from timeline import TimelineScene, ClipGraphicsItem, AudioGraphicsItem, MAX_VIDEO_LAYER
 
 
 class EditorProjectMixin:
@@ -109,6 +109,75 @@ class EditorProjectMixin:
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=True)
         if self.list_audio.currentRow() == -1 and self.audios: self.list_audio.setCurrentRow(0)
+
+    def on_add_text(self):
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Add Text Clip")
+        layout = QtWidgets.QVBoxLayout(dlg)
+
+        form = QtWidgets.QFormLayout()
+        text_edit = QtWidgets.QPlainTextEdit()
+        text_edit.setPlaceholderText("Type your text...")
+        text_edit.setFixedHeight(120)
+        dur_spin = QtWidgets.QDoubleSpinBox()
+        dur_spin.setRange(0.1, 600.0)
+        dur_spin.setDecimals(2)
+        dur_spin.setSingleStep(0.5)
+        dur_spin.setValue(3.0)
+        size_spin = QtWidgets.QSpinBox()
+        size_spin.setRange(10, 200)
+        size_spin.setValue(64)
+        form.addRow("Text:", text_edit)
+        form.addRow("Duration (s):", dur_spin)
+        form.addRow("Font Size:", size_spin)
+        layout.addLayout(form)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if hasattr(self, "_apply_dialog_theme"):
+            self._apply_dialog_theme(dlg)
+
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            return
+
+        text = text_edit.toPlainText().strip()
+        if not text:
+            QtWidgets.QMessageBox.warning(self, "Missing text", "Please enter some text.")
+            return
+
+        duration = float(dur_spin.value())
+        last_end = max([c.start_time + c.trimmed_length() for c in self.clips], default=0.0)
+        c = ClipItem(
+            path="",
+            duration=duration,
+            trim_in=0.0,
+            trim_out=duration,
+            start_time=last_end,
+            layer=MAX_VIDEO_LAYER,
+            clip_type="text",
+            text=text,
+            text_size=int(size_spin.value()),
+            text_color="#FFFFFF",
+            bg_color="transparent",
+        )
+        self.clips.append(c)
+        gi = self.scene.add_clip_item(c)
+        gi.moved.connect(self.on_clip_moved)
+        self.graphics_by_clip[self._gi_key(c)] = gi
+
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
+        if self.clips:
+            idx = self.clips.index(c)
+            self.list_clips.setCurrentRow(idx)
+            self._last_selection_kind = "clip"
+            if hasattr(self, "_update_text_inspector"):
+                self._update_text_inspector(c)
 
     def on_remove(self):
         kind = getattr(self, "_last_selection_kind", None)

@@ -3,13 +3,14 @@ import os
 from PySide6 import QtWidgets
 
 from moviepy import (
-    VideoFileClip, AudioFileClip, ColorClip,
+    VideoFileClip, AudioFileClip, ColorClip, ImageClip, CompositeVideoClip,
     concatenate_videoclips, CompositeAudioClip
 )
 
 from effects import EffectConfig, build_chain
 from render_settings import RenderSettingsDialog
-from utils import make_subclip, make_audio_subclip, set_start_compat, set_audio_compat
+from text_render import render_text_qimage, qimage_to_rgba_array
+from utils import make_subclip, make_audio_subclip, set_start_compat, set_audio_compat, set_duration_compat
 
 
 class EditorExportMixin:
@@ -69,9 +70,14 @@ class EditorExportMixin:
 
     def _render_moviepy_sequence(self):
         clips = [c for c in self.clips if c.trimmed_length() > 1e-6]
+        settings = self.render_settings
+        base_size = (1280, 720)
+        if settings["resolution"] != "Auto":
+            base_size = self._target_resolution(settings["resolution"])
+        text_cache: dict[tuple, "np.ndarray"] = {}
         if not clips:
             total = self.timeline_length()
-            video = ColorClip(size=(1280, 720), color=(0, 0, 0), duration=max(0.1, total))
+            video = ColorClip(size=base_size, color=(0, 0, 0), duration=max(0.1, total))
         else:
             boundaries = {0.0}
             for c in clips:
@@ -86,12 +92,50 @@ class EditorExportMixin:
                 t_mid = (t0 + t1) * 0.5
                 c = self._clip_at_time(t_mid)
                 if not c:
-                    v_segments.append(ColorClip(size=(1280, 720), color=(0, 0, 0), duration=t1 - t0))
+                    v_segments.append(ColorClip(size=base_size, color=(0, 0, 0), duration=t1 - t0))
                     continue
-                base = VideoFileClip(c.path)
-                local_start = c.trim_in + (t0 - c.start_time)
-                local_end = local_start + (t1 - t0)
-                sub = make_subclip(base, local_start, local_end)
+                if c.is_text():
+                    base = self._clip_below_video_at_time(t_mid, c.layer)
+                    if base:
+                        base_clip = VideoFileClip(base.path)
+                        base_local_start = base.trim_in + (t0 - base.start_time)
+                        base_local_end = base_local_start + (t1 - t0)
+                        base_sub = make_subclip(base_clip, base_local_start, base_local_end)
+                    else:
+                        base_sub = ColorClip(size=base_size, color=(0, 0, 0), duration=t1 - t0)
+
+                    overlay_w = base_sub.w if hasattr(base_sub, "w") else base_size[0]
+                    overlay_h = base_sub.h if hasattr(base_sub, "h") else base_size[1]
+                    cache_key = (
+                        id(c),
+                        overlay_w,
+                        overlay_h,
+                        c.text,
+                        c.text_size,
+                        c.text_color,
+                        c.bg_color,
+                    )
+                    arr = text_cache.get(cache_key)
+                    if arr is None:
+                        img = render_text_qimage(
+                            c.text,
+                            overlay_w,
+                            overlay_h,
+                            bg_color=c.bg_color,
+                            text_color=c.text_color,
+                            font_size=c.text_size,
+                        )
+                        arr = qimage_to_rgba_array(img)
+                        text_cache[cache_key] = arr
+                    text_sub = ImageClip(arr)
+                    text_sub = set_duration_compat(text_sub, t1 - t0)
+                    sub = CompositeVideoClip([base_sub, text_sub], size=(overlay_w, overlay_h))
+                    sub = set_duration_compat(sub, t1 - t0)
+                else:
+                    base = VideoFileClip(c.path)
+                    local_start = c.trim_in + (t0 - c.start_time)
+                    local_end = local_start + (t1 - t0)
+                    sub = make_subclip(base, local_start, local_end)
                 try:
                     effect_cfgs = [EffectConfig(**ec) for ec in (getattr(c, "effects", []) or [])]
                     for eff in build_chain(effect_cfgs):
@@ -119,7 +163,6 @@ class EditorExportMixin:
             comp = CompositeAudioClip(tracks)
             video = set_audio_compat(video, comp)
 
-        settings = self.render_settings
         if settings["resolution"] != "Auto":
             target_w, target_h = self._target_resolution(settings["resolution"])
             video = video.resized(new_size=(target_w, target_h))

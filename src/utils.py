@@ -38,9 +38,14 @@ def set_start_compat(clip: Any, t: float):
 
 def set_audio_compat(video: Any, audio: Any):
 
-       
+     
     return video.with_audio(audio) if hasattr(video, "with_audio") else video.set_audio(audio)
 
+
+def set_duration_compat(clip: Any, duration: float):
+
+     
+    return clip.with_duration(duration) if hasattr(clip, "with_duration") else clip.set_duration(duration)
 
                                                                                  
 

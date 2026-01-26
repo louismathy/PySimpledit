@@ -55,8 +55,11 @@ class EditorEffectsMixin:
     def _apply_effects_preview_refresh(self):
         c = self._clip_at_time(self.current_time)
         if c:
-            local = c.trim_in + (self.current_time - c.start_time)
-            self._request_frame(c.path, local)
+            if c.is_text():
+                self._render_text_preview(c)
+            else:
+                local = c.trim_in + (self.current_time - c.start_time)
+                self._request_frame(c.path, local)
 
     def on_effect_add_from_browser(self):
         c = self._current_clip_or_none()

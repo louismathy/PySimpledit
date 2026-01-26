@@ -129,7 +129,7 @@ class ClipGraphicsItem(QtWidgets.QGraphicsObject):
         self.update_geometry()
 
     def _refresh_label(self):
-        text = QtCore.QFileInfo(self.model.path).fileName() + f"  [{self.model.trim_in:.2f}-{self.model.safe_out():.2f}s]"
+        text = self.model.display_name() + f"  [{self.model.trim_in:.2f}-{self.model.safe_out():.2f}s]"
         self._label_cache.setText(text)
 
     def boundingRect(self) -> QtCore.QRectF:

@@ -27,7 +27,7 @@ class EditorSelectionMixin:
         self.list_clips.blockSignals(True)
         self.list_clips.clear()
         for c in self.clips:
-            label = f"{os.path.basename(c.path)}  t={c.start_time:.2f}s  [{c.trim_in:.2f}-{c.safe_out():.2f}s]"
+            label = f"{c.display_name()}  t={c.start_time:.2f}s  [{c.trim_in:.2f}-{c.safe_out():.2f}s]"
             item = QtWidgets.QListWidgetItem(label)
             thumb_key = self._thumb_key(c)
             item.setData(QtCore.Qt.UserRole, thumb_key)
@@ -36,8 +36,21 @@ class EditorSelectionMixin:
             if cached:
                 item.setIcon(QtGui.QIcon(cached))
             else:
-                item.setIcon(QtGui.QIcon(self._placeholder_thumbnail()))
-                self._queue_thumbnail(c)
+                if c.is_text():
+                    pix = self._render_text_thumbnail(c)
+                    if pix is not None:
+                        self._thumb_cache[thumb_key] = pix
+                        item.setIcon(QtGui.QIcon(pix))
+                    else:
+                        item.setIcon(QtGui.QIcon(self._placeholder_thumbnail()))
+                else:
+                    fallback = self._cached_thumbnail_for_path(c.path)
+                    if fallback is not None:
+                        self._thumb_cache[thumb_key] = fallback
+                        item.setIcon(QtGui.QIcon(fallback))
+                    else:
+                        item.setIcon(QtGui.QIcon(self._placeholder_thumbnail()))
+                        self._queue_thumbnail(c)
             self.list_clips.addItem(item)
         self.list_clips.blockSignals(False)
 
@@ -59,6 +72,8 @@ class EditorSelectionMixin:
             self.list_audio.setCurrentRow(self.audios.index(selected))
 
     def _thumb_key(self, clip: ClipItem) -> str:
+        if clip.is_text():
+            return f"text|{clip.text}|{clip.text_size}|{clip.text_color}|{clip.bg_color}"
         return f"{clip.path}|{clip.trim_in:.3f}"
 
     def _placeholder_thumbnail(self) -> QtGui.QPixmap:
@@ -69,12 +84,39 @@ class EditorSelectionMixin:
         return pix
 
     def _queue_thumbnail(self, clip: ClipItem):
+        if clip.is_text():
+            return
         key = self._thumb_key(clip)
         if key in self._thumb_inflight:
             return
         self._thumb_inflight.add(key)
         worker = ThumbnailWorker(key, clip.path, clip.trim_in, self.list_clips.iconSize(), self._thumb_signals)
         self._thumb_pool.start(worker)
+
+    def _cached_thumbnail_for_path(self, path: str) -> Optional[QtGui.QPixmap]:
+        if not path:
+            return None
+        prefix = f"{path}|"
+        for key, pix in self._thumb_cache.items():
+            if isinstance(key, str) and key.startswith(prefix):
+                return pix
+        return None
+
+    def _render_text_thumbnail(self, clip: ClipItem) -> Optional[QtGui.QPixmap]:
+        try:
+            from text_render import render_text_qimage
+            size = self.list_clips.iconSize()
+            img = render_text_qimage(
+                clip.text,
+                size.width(),
+                size.height(),
+                bg_color=clip.bg_color,
+                text_color=clip.text_color,
+                font_size=max(10, int(clip.text_size * 0.45)),
+            )
+            return QtGui.QPixmap.fromImage(img)
+        except Exception:
+            return None
 
     def _on_thumbnail_ready(self, key: str, img: QtGui.QImage):
         self._thumb_inflight.discard(key)
@@ -99,10 +141,11 @@ class EditorSelectionMixin:
             self.spin_trim_in.setValue(0.0)
             self.spin_trim_out.setValue(0.0)
             self.spin_start.setValue(0.0)
+            self._update_text_inspector(None)
             return
 
         c = self.clips[row]
-        self.lbl_path.setText(c.path)
+        self.lbl_path.setText("Text Clip" if c.is_text() else c.path)
         self.lbl_duration.setText(f"{c.duration:.3f}s")
         self.spin_trim_in.setMaximum(c.duration)
         self.spin_trim_out.setMaximum(c.duration)
@@ -110,8 +153,13 @@ class EditorSelectionMixin:
         self.spin_trim_out.setValue(c.safe_out())
         self.spin_start.setValue(c.start_time)
 
-        self._request_frame(c.path, c.trim_in)
+        if c.is_text():
+            if hasattr(self, "_render_text_preview"):
+                self._render_text_preview(c)
+        else:
+            self._request_frame(c.path, c.trim_in)
         self._refresh_effects_ui()
+        self._update_text_inspector(c)
 
     def _select_clip_from_timeline(self, clip: ClipItem):
         try:
@@ -145,7 +193,11 @@ class EditorSelectionMixin:
             gi.update_geometry(); gi._refresh_label()
         self.refresh_clip_list_labels()
         self._on_timeline_changed(hard=True)
-        self._request_frame(c.path, c.trim_in)
+        if c.is_text():
+            if hasattr(self, "_render_text_preview"):
+                self._render_text_preview(c)
+        else:
+            self._request_frame(c.path, c.trim_in)
 
     def on_select_audio(self, row: int):
         self._last_selection_kind = "audio"
@@ -160,6 +212,7 @@ class EditorSelectionMixin:
             self.spin_aout.setValue(0.0)
             self.spin_astart.setValue(0.0)
             self.spin_again.setValue(0.0)
+            self._update_text_inspector(None)
             return
 
         a = self.audios[row]
@@ -171,6 +224,7 @@ class EditorSelectionMixin:
         self.spin_aout.setValue(a.safe_out())
         self.spin_astart.setValue(a.start_time)
         self.spin_again.setValue(a.gain_db)
+        self._update_text_inspector(None)
 
     def on_apply_audio(self):
         a = self.current_audio()
@@ -187,6 +241,23 @@ class EditorSelectionMixin:
             gi.update_geometry(); gi._refresh_label()
         self.refresh_audio_list_labels()
         self._on_timeline_changed(hard=True)
+
+    def on_apply_text(self):
+        c = self.current_clip()
+        if not c or not c.is_text():
+            return
+        if hasattr(self, "text_edit"):
+            c.text = self.text_edit.toPlainText()
+        if hasattr(self, "spin_text_size"):
+            c.text_size = int(self.spin_text_size.value())
+        gi = self.graphics_by_clip.get(self._gi_key(c))
+        if gi:
+            gi._refresh_label()
+            gi.update()
+        self.refresh_clip_list_labels()
+        self._on_timeline_changed(hard=True)
+        if hasattr(self, "_render_text_preview"):
+            self._render_text_preview(c)
 
     def on_remove_audio(self):
         row = self.list_audio.currentRow()
@@ -215,6 +286,7 @@ class EditorSelectionMixin:
             self.list_audio.clearSelection()
             self.list_clips.blockSignals(False)
             self.list_audio.blockSignals(False)
+            self._update_text_inspector(None)
             return
 
         it = items[0]
@@ -230,6 +302,7 @@ class EditorSelectionMixin:
                 self.list_clips.setCurrentRow(idx)
                 self.list_clips.blockSignals(False)
                 self.list_clips.setFocus()
+            self._update_text_inspector(clip)
 
         elif isinstance(it, AudioGraphicsItem):
             aud = it.model
@@ -242,3 +315,26 @@ class EditorSelectionMixin:
                 self.list_audio.setCurrentRow(idx)
                 self.list_audio.blockSignals(False)
                 self.list_audio.setFocus()
+            self._update_text_inspector(None)
+
+    def _update_text_inspector(self, clip: Optional[ClipItem]):
+        if not hasattr(self, "text_edit"):
+            return
+        is_text = bool(clip and clip.is_text())
+        self.text_edit.setEnabled(is_text)
+        self.spin_text_size.setEnabled(is_text)
+        self.btn_apply_text.setEnabled(is_text)
+        if is_text:
+            self.text_edit.blockSignals(True)
+            self.text_edit.setPlainText(clip.text)
+            self.text_edit.blockSignals(False)
+            self.spin_text_size.blockSignals(True)
+            self.spin_text_size.setValue(int(clip.text_size))
+            self.spin_text_size.blockSignals(False)
+        else:
+            self.text_edit.blockSignals(True)
+            self.text_edit.setPlainText("")
+            self.text_edit.blockSignals(False)
+            self.spin_text_size.blockSignals(True)
+            self.spin_text_size.setValue(64)
+            self.spin_text_size.blockSignals(False)
