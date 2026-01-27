@@ -82,7 +82,7 @@ class EditorProjectMixin:
         last_end = max([c.start_time + c.trimmed_length() for c in self.clips], default=0.0)
         for p in paths:
             try:
-                clip = VideoFileClip(p); dur = float(clip.duration); clip.close()
+                clip = VideoFileClip(p, audio=False); dur = float(clip.duration); clip.close()
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Fehler beim Lesen", f"{p}\n\n{e}"); continue
             c = ClipItem(path=p, duration=dur, trim_in=0.0, trim_out=dur, start_time=last_end)
@@ -497,6 +497,16 @@ class EditorProjectMixin:
                 gi = self.graphics_by_clip.pop(self._gi_key(c), None)
                 if gi: self.scene.removeItem(gi)
                 self.refresh_clip_list_labels()
+                try:
+                    if hasattr(self, "_thumb_pool"):
+                        self._thumb_pool.clear()
+                except Exception:
+                    pass
+                try:
+                    if hasattr(self, "_thumb_inflight"):
+                        self._thumb_inflight.clear()
+                except Exception:
+                    pass
                 self._on_timeline_changed(hard=True)
                 debug_log("remove.clip.list")
                 return
@@ -518,6 +528,16 @@ class EditorProjectMixin:
             gi = self.graphics_by_clip.pop(self._gi_key(c), None)
             if gi: self.scene.removeItem(gi)
             self.refresh_clip_list_labels()
+            try:
+                if hasattr(self, "_thumb_pool"):
+                    self._thumb_pool.clear()
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "_thumb_inflight"):
+                    self._thumb_inflight.clear()
+            except Exception:
+                pass
             self._on_timeline_changed(hard=True)
             self._last_selection_kind = "clip"
             debug_log("remove.clip.selection")

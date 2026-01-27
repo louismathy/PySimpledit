@@ -21,6 +21,38 @@ class EditorEffectsMixin:
     def _current_clip_or_none(self) -> Optional[ClipItem]:
         return self.current_clip()
 
+    def _effects_cache_target(self) -> QtCore.QSize:
+        target = self._effects_browser_target_size()
+        if not target.isValid():
+            return QtCore.QSize(160, 90)
+        return target
+
+    def _ensure_effects_browser_cache(self):
+        target = self._effects_cache_target()
+        cache_key = (int(target.width()), int(target.height()))
+        if getattr(self, "_effects_browser_cache_key", None) != cache_key:
+            self._effects_browser_cache_key = cache_key
+            self._effects_browser_cache = {}
+        if not hasattr(self, "_effects_browser_cache"):
+            self._effects_browser_cache = {}
+
+        cache = self._effects_browser_cache
+        if len(cache) == len(AVAILABLE_EFFECTS):
+            return
+
+        from effects import apply_chain_qimage
+        base_img = self._placeholder_preview_image()
+        for eff_key in AVAILABLE_EFFECTS.keys():
+            if eff_key in cache:
+                continue
+            cfg = {"type": eff_key, "params": {}}
+            try:
+                img = apply_chain_qimage(base_img, [cfg])
+            except Exception:
+                img = base_img
+            img = self._scale_and_crop_qimage(img, target)
+            cache[eff_key] = QtGui.QPixmap.fromImage(img)
+
     def _refresh_effects_ui(self):
         c = self._current_clip_or_none()
         self.list_effects.clear()
@@ -119,18 +151,11 @@ class EditorEffectsMixin:
         row = self.list_effects.row(item)
         if row >= 0:
             self.list_effects.setCurrentRow(row)
-        from effects import apply_chain_qimage
-
-        base_img = self._current_preview_image()
-        if base_img is None:
-            base_img = self._placeholder_preview_image()
-
-        try:
-            img = apply_chain_qimage(base_img, [cfg])
-        except Exception:
-            img = base_img
-
-        pix = QtGui.QPixmap.fromImage(img)
+        self._ensure_effects_browser_cache()
+        eff_key = cfg.get("type", "")
+        pix = self._effects_browser_cache.get(eff_key)
+        if pix is None:
+            pix = QtGui.QPixmap.fromImage(self._placeholder_preview_image())
         pix = pix.scaled(220, 124, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
 
         menu = QtWidgets.QMenu(self.list_effects)
@@ -155,30 +180,18 @@ class EditorEffectsMixin:
     def _refresh_effects_browser(self):
         if not hasattr(self, "list_effects_browser"):
             return
-        from effects import apply_chain_qimage
-
+        self._ensure_effects_browser_cache()
         current_key = None
         current_item = self.list_effects_browser.currentItem()
         if current_item:
             current_key = current_item.data(Qt.UserRole)
 
-        if self._current_clip_or_none() is None:
-            base_img = self._placeholder_preview_image()
-        else:
-            base_img = self._current_preview_image()
-            if base_img is None:
-                base_img = self._placeholder_preview_image()
-
         target = self._effects_browser_target_size()
         self.list_effects_browser.clear()
         for eff_key, label in AVAILABLE_EFFECTS.items():
-            cfg = {"type": eff_key, "params": {}}
-            try:
-                img = apply_chain_qimage(base_img, [cfg])
-            except Exception:
-                img = base_img
-            img = self._scale_and_crop_qimage(img, target)
-            pix = QtGui.QPixmap.fromImage(img)
+            pix = self._effects_browser_cache.get(eff_key)
+            if pix is None:
+                pix = QtGui.QPixmap.fromImage(self._placeholder_preview_image())
             item = QtWidgets.QListWidgetItem(label)
             item.setData(Qt.UserRole, eff_key)
             item.setIcon(QtGui.QIcon(pix))
@@ -194,6 +207,8 @@ class EditorEffectsMixin:
 
     def _maybe_refresh_effects_browser(self):
         if not hasattr(self, "list_effects_browser"):
+            return
+        if getattr(self, "playing", False):
             return
         interval = 0 if not getattr(self, "playing", False) else 400
         now_ms = QtCore.QTime.currentTime().msecsSinceStartOfDay()

@@ -37,7 +37,7 @@ class FramePreviewer(QtCore.QThread):
                             pass
                     open_start = time.perf_counter()
                     target = (None, pref_h) if pref_h and pref_h > 0 else None
-                    self._clip = VideoFileClip(path, target_resolution=target)
+                    self._clip = VideoFileClip(path, target_resolution=target, audio=False)
                     self._current_key = key
                     open_dt = time.perf_counter() - open_start
                     if open_dt > 0.5:

@@ -88,6 +88,17 @@ class EditorPlaybackMixin:
             debug_log(f"play.toggle playing={self.playing} t={self.current_time:.3f}")
             if hasattr(self, "_thumb_pause"):
                 self._thumb_pause = self.playing
+                if self.playing:
+                    try:
+                        if hasattr(self, "_thumb_pool"):
+                            self._thumb_pool.clear()
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(self, "_thumb_inflight"):
+                            self._thumb_inflight.clear()
+                    except Exception:
+                        pass
 
             if self.playing:
                 self._last_tick_ns = time.perf_counter_ns()

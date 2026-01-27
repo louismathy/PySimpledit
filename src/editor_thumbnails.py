@@ -21,7 +21,7 @@ class ThumbnailWorker(QtCore.QRunnable):
 
     def run(self):
         try:
-            clip = VideoFileClip(self._path)
+            clip = VideoFileClip(self._path, audio=False)
             try:
                 frame = clip.get_frame(self._t_local)
             finally:

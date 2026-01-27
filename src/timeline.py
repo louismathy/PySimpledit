@@ -424,10 +424,11 @@ class TimelineView(QtWidgets.QGraphicsView):
 
     def __init__(self, scene: TimelineScene):
         super().__init__(scene)
-        self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+        self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
         self.setViewportUpdateMode(QtWidgets.QGraphicsView.MinimalViewportUpdate)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setCursor(Qt.ArrowCursor)
         self.set_theme("light")
 
     def set_theme(self, mode: str):
@@ -528,4 +529,13 @@ class TimelineView(QtWidgets.QGraphicsView):
             self.time_changed.emit(t)
             e.accept()
             return
+        if e.button() == Qt.LeftButton:
+            self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+            self.setCursor(Qt.ClosedHandCursor)
         super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e: QtGui.QMouseEvent):
+        if self.dragMode() == QtWidgets.QGraphicsView.ScrollHandDrag:
+            self.setDragMode(QtWidgets.QGraphicsView.NoDrag)
+            self.setCursor(Qt.ArrowCursor)
+        super().mouseReleaseEvent(e)
