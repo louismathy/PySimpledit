@@ -9,7 +9,7 @@ from moviepy import VideoFileClip, AudioFileClip
 
 from models import ClipItem, AudioItem
 from timeline import TimelineScene, ClipGraphicsItem, AudioGraphicsItem, MAX_VIDEO_LAYER
-from utils import make_audio_subclip
+from utils import make_audio_subclip, debug_log
 
 
 class EditorProjectMixin:
@@ -465,6 +465,18 @@ class EditorProjectMixin:
             except ValueError:
                 pass
     def on_remove(self):
+        debug_log("remove.start")
+        if getattr(self, "playing", False):
+            try:
+                self.on_toggle_play()
+            except Exception:
+                pass
+        try:
+            if hasattr(self, "audio_engine"):
+                self.audio_engine.stop()
+        except Exception:
+            pass
+
         kind = getattr(self, "_last_selection_kind", None)
 
         if kind == "audio":
@@ -475,6 +487,7 @@ class EditorProjectMixin:
                 if gi: self.scene.removeItem(gi)
                 self.refresh_audio_list_labels()
                 self._on_timeline_changed(hard=True)
+                debug_log("remove.audio.list")
                 return
 
         if kind == "clip":
@@ -485,6 +498,7 @@ class EditorProjectMixin:
                 if gi: self.scene.removeItem(gi)
                 self.refresh_clip_list_labels()
                 self._on_timeline_changed(hard=True)
+                debug_log("remove.clip.list")
                 return
 
         rowa = self.list_audio.currentRow()
@@ -495,6 +509,7 @@ class EditorProjectMixin:
             self.refresh_audio_list_labels()
             self._on_timeline_changed(hard=True)
             self._last_selection_kind = "audio"
+            debug_log("remove.audio.selection")
             return
 
         row = self.list_clips.currentRow()
@@ -505,6 +520,7 @@ class EditorProjectMixin:
             self.refresh_clip_list_labels()
             self._on_timeline_changed(hard=True)
             self._last_selection_kind = "clip"
+            debug_log("remove.clip.selection")
             return
 
         items = self.scene.selectedItems() if self.scene else []
@@ -521,6 +537,7 @@ class EditorProjectMixin:
                     self.refresh_audio_list_labels()
                     self._on_timeline_changed(hard=True)
                     self._last_selection_kind = "audio"
+                    debug_log("remove.audio.timeline_item")
                     return
 
         for it in items:
@@ -536,4 +553,5 @@ class EditorProjectMixin:
                     self.refresh_clip_list_labels()
                     self._on_timeline_changed(hard=True)
                     self._last_selection_kind = "clip"
+                    debug_log("remove.clip.timeline_item")
                     return

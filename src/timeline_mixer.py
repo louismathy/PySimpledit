@@ -73,7 +73,10 @@ class TimelineMixer:
         binds = []
 
                                                                     
-        for c in self._clips_ref():
+        clips = list(self._clips_ref() or [])
+        audios = list(self._audios_ref() or [])
+
+        for c in clips:
             if getattr(c, "is_text", None) and c.is_text():
                 continue
             if not getattr(c, "path", ""):
@@ -89,7 +92,7 @@ class TimelineMixer:
                 ))
 
                                
-        for a in self._audios_ref():
+        for a in audios:
             if (t0 < a.start_time + a.trimmed_length()) and (t1 > a.start_time):
                 binds.append(_TrackBinding(
                     path=a.path,

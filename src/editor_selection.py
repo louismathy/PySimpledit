@@ -86,6 +86,8 @@ class EditorSelectionMixin:
     def _queue_thumbnail(self, clip: ClipItem):
         if clip.is_text():
             return
+        if getattr(self, "_thumb_pause", False):
+            return
         key = self._thumb_key(clip)
         if key in self._thumb_inflight:
             return

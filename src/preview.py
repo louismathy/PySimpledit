@@ -1,9 +1,11 @@
 import queue
 import threading
+import time
 from typing import Optional, Tuple
 
 from PySide6 import QtCore, QtGui
 from moviepy import VideoFileClip
+from utils import debug_log
 
 
 class FramePreviewer(QtCore.QThread):
@@ -33,10 +35,13 @@ class FramePreviewer(QtCore.QThread):
                             self._clip.close()
                         except Exception:
                             pass
-                                                                                               
+                    open_start = time.perf_counter()
                     target = (None, pref_h) if pref_h and pref_h > 0 else None
                     self._clip = VideoFileClip(path, target_resolution=target)
                     self._current_key = key
+                    open_dt = time.perf_counter() - open_start
+                    if open_dt > 0.5:
+                        debug_log(f"preview.open.slow dt={open_dt:.3f} path={path}")
 
                 clip = self._clip
                 if clip is None:
@@ -46,7 +51,11 @@ class FramePreviewer(QtCore.QThread):
                 t = max(0.0, min(t, float(clip.duration)))
 
                                    
-                frame = clip.get_frame(t)                     
+                frame_start = time.perf_counter()
+                frame = clip.get_frame(t)
+                frame_dt = time.perf_counter() - frame_start
+                if frame_dt > 0.5:
+                    debug_log(f"preview.frame.slow dt={frame_dt:.3f} t={t:.3f} path={path}")
                 h, w, _ = frame.shape
 
                                           
@@ -55,6 +64,7 @@ class FramePreviewer(QtCore.QThread):
                                                                     
                 if wid > 0 and hei > 0:
                     if qimg.width() != wid or qimg.height() != hei:
+                        scale_start = time.perf_counter()
                         qimg_scaled = qimg.scaled(
                             wid, hei, QtCore.Qt.KeepAspectRatio, QtCore.Qt.FastTransformation
                         )
@@ -69,10 +79,14 @@ class FramePreviewer(QtCore.QThread):
                             painter.drawImage(x, y, qimg_scaled)
                             painter.end()
                             qimg = final
+                        scale_dt = time.perf_counter() - scale_start
+                        if scale_dt > 0.2:
+                            debug_log(f"preview.scale.slow dt={scale_dt:.3f} size={wid}x{hei}")
 
                 self.frame_ready.emit(qimg)
 
             except Exception as e:
+                debug_log(f"preview.error {e}")
                 self.frame_error.emit(str(e))
 
     def request(self, path: str, t: float, widget_width: int, widget_height: int, pref_height: int):

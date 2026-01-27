@@ -1,4 +1,6 @@
 import math
+import os
+import time
 from typing import Any
 from moviepy import VideoFileClip, AudioFileClip
 
@@ -57,3 +59,19 @@ def db_to_linear(db: float) -> float:
 def clamp(val: float, lo: float, hi: float) -> float:
                                    
     return max(lo, min(hi, val))
+
+
+def debug_log(msg: str):
+                                           
+    if not os.environ.get("SIMPLEDIT_DEBUG"):
+        return
+    ts = time.strftime("%H:%M:%S")
+    line = f"[debug {ts}] {msg}"
+    print(line)
+    log_path = os.environ.get("SIMPLEDIT_DEBUG_FILE")
+    if log_path:
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass

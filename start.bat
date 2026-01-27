@@ -15,6 +15,12 @@ if not exist venv (
 REM Activate venv
 call venv\Scripts\activate
 
+REM Debug logging (optional)
+REM set SIMPLEDIT_DEBUG=1
+if "%SIMPLEDIT_DEBUG%"=="1" (
+    set SIMPLEDIT_DEBUG_FILE=%~dp0simpledit-debug.log
+)
+
 REM Start the app
 echo [Simpledit] Starting editor ...
 python src/main.py

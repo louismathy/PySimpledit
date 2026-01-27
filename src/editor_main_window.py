@@ -58,6 +58,8 @@ class EditorMainWindow(
         self._thumb_signals = ThumbnailSignals()
         self._thumb_signals.ready.connect(self._on_thumbnail_ready)
         self._thumb_pool = QtCore.QThreadPool()
+        self._thumb_pool.setMaxThreadCount(1)
+        self._thumb_pause = False
         self._theme_mode = "dark"
 
         self.audio_sr = 48000

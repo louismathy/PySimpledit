@@ -6,7 +6,7 @@ from typing import Optional
 from PySide6 import QtWidgets, QtGui, QtCore
 
 from models import ClipItem, AudioItem
-from utils import fmt_time
+from utils import fmt_time, debug_log
 
 
 class EditorPlaybackMixin:
@@ -85,6 +85,9 @@ class EditorPlaybackMixin:
             self.playing = not self.playing
             self.action_play.setText("Pause" if self.playing else "Play")
             self._set_action_icon(self.action_play, "pause.png" if self.playing else "play.png")
+            debug_log(f"play.toggle playing={self.playing} t={self.current_time:.3f}")
+            if hasattr(self, "_thumb_pause"):
+                self._thumb_pause = self.playing
 
             if self.playing:
                 self._last_tick_ns = time.perf_counter_ns()
@@ -96,6 +99,10 @@ class EditorPlaybackMixin:
                 self.play_timer.stop()
                 self._last_tick_ns = None
                 self.audio_engine.pause()
+                try:
+                    self.refresh_clip_list_labels()
+                except Exception:
+                    pass
         except Exception as e:
             traceback.print_exc()
             self.playing = False
@@ -107,12 +114,7 @@ class EditorPlaybackMixin:
             self.action_play.setText("Play")
 
     def _tick_playback(self):
-        if self.playing and self.audio_enabled:
-            t = self.audio_engine.time()
-            self.seek(t, from_player=True)
-            return
-
-        if self.playing and not self.audio_enabled:
+        if self.playing:
             now_ns = time.perf_counter_ns()
             if getattr(self, "_last_tick_ns", None) is None:
                 self._last_tick_ns = now_ns
@@ -121,7 +123,20 @@ class EditorPlaybackMixin:
             self._last_tick_ns = now_ns
             if dt < 0:
                 dt = 0
-            self.seek(self.current_time + dt, from_player=True)
+            if dt > 0.5:
+                debug_log(f"tick.lag dt={dt:.3f} t={self.current_time:.3f}")
+            expected = self.current_time + dt
+            if self.audio_enabled:
+                try:
+                    at = float(self.audio_engine.time())
+                except Exception:
+                    at = expected
+                if at >= self.current_time and abs(at - expected) < 0.5:
+                    self.seek(at, from_player=True)
+                else:
+                    self.seek(expected, from_player=True)
+            else:
+                self.seek(expected, from_player=True)
 
     def _clip_at_time(self, t: float) -> Optional[ClipItem]:
         best = None
@@ -180,6 +195,7 @@ class EditorPlaybackMixin:
         return None
 
     def seek(self, t: float, from_player: bool=False):
+        t0 = time.perf_counter()
         self.current_time = max(0.0, t)
         self.lbl_time.setText(fmt_time(self.current_time))
         self.scene.update_playhead_x(self.current_time)
@@ -224,6 +240,14 @@ class EditorPlaybackMixin:
 
         if self.audio_enabled and not from_player:
             self.audio_engine.seek(self.current_time)
+
+        dt = time.perf_counter() - t0
+        if dt > 0.08:
+            c = self._clip_at_time(self.current_time)
+            kind = "none"
+            if c:
+                kind = "text" if c.is_text() else "video"
+            debug_log(f"seek.slow dt={dt:.3f} kind={kind} t={self.current_time:.3f}")
 
     def _request_frame(self, path: str, t_local: float):
         w = self.video_widget.width()
