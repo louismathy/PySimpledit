@@ -74,8 +74,10 @@ class TimelineMixer:
 
                                                                     
         for c in self._clips_ref():
-                                                                                   
-                                                                                                          
+            if getattr(c, "is_text", None) and c.is_text():
+                continue
+            if not getattr(c, "path", ""):
+                continue
             if (t0 < c.start_time + c.trimmed_length()) and (t1 > c.start_time):
                 binds.append(_TrackBinding(
                     path=c.path,

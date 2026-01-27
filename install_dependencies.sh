@@ -16,6 +16,8 @@ source venv/bin/activate
 echo "[Simpledit] Install dependencies ..."
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+# Whisper + PyTorch for auto subtitles
+python -m pip install openai-whisper
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   echo ""

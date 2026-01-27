@@ -21,6 +21,8 @@ REM Install/update packages
 echo [Simpledit] Installing dependencies ...
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+REM Whisper + PyTorch for auto subtitles
+python -m pip install openai-whisper
 
 REM ffmpeg note (needed for moviepy/pydub)
 where ffmpeg >nul 2>&1

@@ -148,6 +148,8 @@ class EditorMainWindow(
         self.action_import_audio.triggered.connect(self.on_import_audio)
         self.action_add_text = tb.addAction("Add Text")
         self.action_add_text.triggered.connect(self.on_add_text)
+        self.action_auto_subtitles = tb.addAction("Auto Subtitles")
+        self.action_auto_subtitles.triggered.connect(self.on_auto_subtitles)
         self.action_remove = tb.addAction("Remove")
         self._set_action_icon(self.action_remove, "remove.png")
         self.action_remove.triggered.connect(self.on_remove)

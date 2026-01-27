@@ -24,6 +24,11 @@ timeline scheduling, preview vs. render separation, and audio/video sync.
 ## Requirements
 - Python 3.10+
 - FFmpeg available in PATH (required by MoviePy)
+- For auto subtitles: openai-whisper (installs PyTorch)
+
+## Auto Subtitles (Whisper)
+Simpledit can generate subtitles from a selected video/audio item using the Whisper model.
+Make sure `openai-whisper` and PyTorch install correctly for your system.
 
 ## Install and Run (Windows)
 
