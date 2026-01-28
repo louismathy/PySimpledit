@@ -131,9 +131,18 @@ class EditorProjectMixin:
         size_spin = QtWidgets.QSpinBox()
         size_spin.setRange(10, 200)
         size_spin.setValue(64)
+        font_combo = QtWidgets.QComboBox()
+        font_combo.addItem("Default", "")
+        try:
+            from text_render import list_available_fonts
+            for label, path in list_available_fonts():
+                font_combo.addItem(label, path)
+        except Exception:
+            pass
         form.addRow("Text:", text_edit)
         form.addRow("Duration (s):", dur_spin)
         form.addRow("Font Size:", size_spin)
+        form.addRow("Font:", font_combo)
         layout.addLayout(form)
 
         buttons = QtWidgets.QDialogButtonBox(
@@ -167,6 +176,7 @@ class EditorProjectMixin:
             text=text,
             text_size=int(size_spin.value()),
             text_color="#FFFFFF",
+            text_font=str(font_combo.currentData() or ""),
             bg_color="transparent",
         )
         self.clips.append(c)
@@ -259,6 +269,14 @@ class EditorProjectMixin:
         text_size: int,
         max_chars: int,
     ) -> list[ClipItem]:
+        default_font = ""
+        try:
+            from text_render import list_available_fonts
+            fonts = list_available_fonts()
+            if fonts:
+                default_font = fonts[0][1]
+        except Exception:
+            pass
         created: list[ClipItem] = []
         for seg in segments:
             seg_start = float(seg.get("start", 0.0))
@@ -282,6 +300,7 @@ class EditorProjectMixin:
                 text=text,
                 text_size=int(text_size),
                 text_color="#FFFFFF",
+                text_font=default_font,
                 bg_color="transparent",
             )
             created.append(c)

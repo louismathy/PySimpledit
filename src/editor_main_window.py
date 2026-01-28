@@ -249,14 +249,24 @@ class EditorMainWindow(
         self.spin_text_size = QtWidgets.QSpinBox()
         self.spin_text_size.setRange(10, 200)
         self.spin_text_size.setValue(64)
+        self.combo_text_font = QtWidgets.QComboBox()
+        self.combo_text_font.addItem("Default", "")
+        try:
+            from text_render import list_available_fonts
+            for label, path in list_available_fonts():
+                self.combo_text_font.addItem(label, path)
+        except Exception:
+            pass
         self.btn_apply_text = QtWidgets.QPushButton("Apply Text")
         self.btn_apply_text.clicked.connect(self.on_apply_text)
         lt.addRow("Text:", self.text_edit)
         lt.addRow("Font Size:", self.spin_text_size)
+        lt.addRow("Font:", self.combo_text_font)
         lt.addRow(self.btn_apply_text)
         inspector.addTab(wt, "Text")
         self.text_edit.setEnabled(False)
         self.spin_text_size.setEnabled(False)
+        self.combo_text_font.setEnabled(False)
         self.btn_apply_text.setEnabled(False)
 
         we = QtWidgets.QWidget()

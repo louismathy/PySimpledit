@@ -73,7 +73,7 @@ class EditorSelectionMixin:
 
     def _thumb_key(self, clip: ClipItem) -> str:
         if clip.is_text():
-            return f"text|{clip.text}|{clip.text_size}|{clip.text_color}|{clip.bg_color}"
+            return f"text|{clip.text}|{clip.text_size}|{clip.text_color}|{clip.bg_color}|{clip.text_font}"
         return f"{clip.path}|{clip.trim_in:.3f}"
 
     def _placeholder_thumbnail(self) -> QtGui.QPixmap:
@@ -114,6 +114,7 @@ class EditorSelectionMixin:
                 size.height(),
                 bg_color=clip.bg_color,
                 text_color=clip.text_color,
+                font_path=getattr(clip, "text_font", ""),
                 font_size=max(10, int(clip.text_size * 0.45)),
             )
             return QtGui.QPixmap.fromImage(img)
@@ -252,6 +253,8 @@ class EditorSelectionMixin:
             c.text = self.text_edit.toPlainText()
         if hasattr(self, "spin_text_size"):
             c.text_size = int(self.spin_text_size.value())
+        if hasattr(self, "combo_text_font"):
+            c.text_font = str(self.combo_text_font.currentData() or "")
         gi = self.graphics_by_clip.get(self._gi_key(c))
         if gi:
             gi._refresh_label()
@@ -325,6 +328,8 @@ class EditorSelectionMixin:
         is_text = bool(clip and clip.is_text())
         self.text_edit.setEnabled(is_text)
         self.spin_text_size.setEnabled(is_text)
+        if hasattr(self, "combo_text_font"):
+            self.combo_text_font.setEnabled(is_text)
         self.btn_apply_text.setEnabled(is_text)
         if is_text:
             self.text_edit.blockSignals(True)
@@ -333,6 +338,14 @@ class EditorSelectionMixin:
             self.spin_text_size.blockSignals(True)
             self.spin_text_size.setValue(int(clip.text_size))
             self.spin_text_size.blockSignals(False)
+            if hasattr(self, "combo_text_font"):
+                self.combo_text_font.blockSignals(True)
+                desired = getattr(clip, "text_font", "")
+                idx = self.combo_text_font.findData(desired)
+                if idx < 0:
+                    idx = 0
+                self.combo_text_font.setCurrentIndex(idx)
+                self.combo_text_font.blockSignals(False)
         else:
             self.text_edit.blockSignals(True)
             self.text_edit.setPlainText("")
@@ -340,3 +353,7 @@ class EditorSelectionMixin:
             self.spin_text_size.blockSignals(True)
             self.spin_text_size.setValue(64)
             self.spin_text_size.blockSignals(False)
+            if hasattr(self, "combo_text_font"):
+                self.combo_text_font.blockSignals(True)
+                self.combo_text_font.setCurrentIndex(0)
+                self.combo_text_font.blockSignals(False)

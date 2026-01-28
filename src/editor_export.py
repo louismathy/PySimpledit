@@ -5,7 +5,7 @@ from PySide6 import QtWidgets, QtCore
 
 from moviepy import (
     VideoFileClip, AudioFileClip, ColorClip, ImageClip, CompositeVideoClip,
-    concatenate_videoclips, CompositeAudioClip
+    concatenate_videoclips, CompositeAudioClip, TextClip
 )
 
 from effects import EffectConfig, build_chain
@@ -241,7 +241,6 @@ class EditorExportMixin:
         base_size = (1280, 720)
         if settings["resolution"] != "Auto":
             base_size = self._target_resolution(settings["resolution"])
-        text_cache: dict[tuple, "np.ndarray"] = {}
         if not clips:
             total = self.timeline_length()
             video = ColorClip(size=base_size, color=(0, 0, 0), duration=max(0.1, total))
@@ -273,28 +272,20 @@ class EditorExportMixin:
 
                     overlay_w = base_sub.w if hasattr(base_sub, "w") else base_size[0]
                     overlay_h = base_sub.h if hasattr(base_sub, "h") else base_size[1]
-                    cache_key = (
-                        id(c),
-                        overlay_w,
-                        overlay_h,
-                        c.text,
-                        c.text_size,
-                        c.text_color,
-                        c.bg_color,
+                    bg = None if str(c.bg_color).lower() in {"transparent", "none", ""} else c.bg_color
+                    font_path = getattr(c, "text_font", "") or None
+                    text_sub = TextClip(
+                        text=c.text or "",
+                        font_size=int(c.text_size * 2),
+                        color=str(c.text_color or "#FFFFFF"),
+                        size=(int(overlay_w), int(overlay_h)),
+                        method="caption",
+                        text_align="center",
+                        horizontal_align="center",
+                        vertical_align="center",
+                        font=font_path,
+                        bg_color=bg,
                     )
-                    arr = text_cache.get(cache_key)
-                    if arr is None:
-                        img = render_text_qimage(
-                            c.text,
-                            overlay_w,
-                            overlay_h,
-                            bg_color=c.bg_color,
-                            text_color=c.text_color,
-                            font_size=c.text_size,
-                        )
-                        arr = qimage_to_rgba_array(img)
-                        text_cache[cache_key] = arr
-                    text_sub = ImageClip(arr)
                     text_sub = set_duration_compat(text_sub, t1 - t0)
                     sub = CompositeVideoClip([base_sub, text_sub], size=(overlay_w, overlay_h))
                     sub = set_duration_compat(sub, t1 - t0)

@@ -282,6 +282,7 @@ class EditorPlaybackMixin:
             target_h,
             bg_color=clip.bg_color,
             text_color=clip.text_color,
+            font_path=getattr(clip, "text_font", ""),
             font_size=font_size,
         )
         self._on_frame_ready(img)
@@ -333,6 +334,7 @@ class EditorPlaybackMixin:
             target_h,
             bg_color=clip.bg_color,
             text_color=clip.text_color,
+            font_path=getattr(clip, "text_font", ""),
             font_size=font_size,
         )
         out = QtGui.QImage(base)
