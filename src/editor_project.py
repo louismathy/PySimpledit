@@ -357,11 +357,12 @@ class EditorProjectMixin:
             QtWidgets.QMessageBox.warning(self, "Auto Subtitles", "Subtitle generation is already running.")
             return
 
-        progress = QtWidgets.QProgressDialog("Transcribing audio with Whisper...", "", 0, 0, self)
+        progress = QtWidgets.QProgressDialog("Transcribing audio with Whisper...", "", 0, 100, self)
         progress.setWindowTitle("Auto Subtitles")
         progress.setCancelButton(None)
         progress.setWindowModality(QtCore.Qt.ApplicationModal)
         progress.setMinimumDuration(0)
+        progress.setValue(0)
         progress.show()
 
         try:
@@ -372,6 +373,22 @@ class EditorProjectMixin:
             return
 
         self._subtitle_progress = progress
+        self._subtitle_progress_timer = QtCore.QTimer(self)
+        self._subtitle_progress_timer.setInterval(200)
+        self._subtitle_progress_elapsed = QtCore.QElapsedTimer()
+        self._subtitle_progress_elapsed.start()
+        self._subtitle_progress_expected = max(1.0, float(src_trim_out - src_trim_in))
+
+        def _tick_progress():
+            prog = getattr(self, "_subtitle_progress", None)
+            if not prog:
+                return
+            elapsed = float(self._subtitle_progress_elapsed.elapsed()) / 1000.0
+            frac = min(0.95, elapsed / self._subtitle_progress_expected)
+            prog.setValue(int(frac * 100))
+
+        self._subtitle_progress_timer.timeout.connect(_tick_progress)
+        self._subtitle_progress_timer.start()
         self._subtitle_job = {
             "audio_path": audio_path,
             "start_time": src_start_time,
@@ -413,6 +430,12 @@ class EditorProjectMixin:
         if progress:
             progress.close()
         self._subtitle_progress = None
+        timer = getattr(self, "_subtitle_progress_timer", None)
+        if timer:
+            timer.stop()
+        self._subtitle_progress_timer = None
+        self._subtitle_progress_elapsed = None
+        self._subtitle_progress_expected = None
 
         thread = getattr(self, "_subtitle_thread", None)
         worker = getattr(self, "_subtitle_worker", None)
@@ -443,6 +466,9 @@ class EditorProjectMixin:
         max_chars = int(job.get("max_chars", 42))
 
         created = self._apply_subtitle_segments(segments, start_time, font_size, max_chars)
+        progress = getattr(self, "_subtitle_progress", None)
+        if progress:
+            progress.setValue(100)
         self._finalize_subtitle_job()
 
         if not created:
