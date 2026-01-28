@@ -131,6 +131,7 @@ class EditorProjectMixin:
         size_spin = QtWidgets.QSpinBox()
         size_spin.setRange(10, 200)
         size_spin.setValue(64)
+        color_edit = QtWidgets.QLineEdit("#FFFFFF")
         font_combo = QtWidgets.QComboBox()
         font_combo.addItem("Default", "")
         try:
@@ -139,10 +140,31 @@ class EditorProjectMixin:
                 font_combo.addItem(label, path)
         except Exception:
             pass
+        align_combo = QtWidgets.QComboBox()
+        align_combo.addItems(["left", "center", "right"])
+        align_combo.setCurrentText("center")
+        valign_combo = QtWidgets.QComboBox()
+        valign_combo.addItems(["top", "center", "bottom"])
+        valign_combo.setCurrentText("center")
+        method_combo = QtWidgets.QComboBox()
+        method_combo.addItems(["caption", "label"])
+        method_combo.setCurrentText("caption")
+        bg_edit = QtWidgets.QLineEdit("transparent")
+        stroke_color = QtWidgets.QLineEdit("#000000")
+        stroke_width = QtWidgets.QSpinBox()
+        stroke_width.setRange(0, 20)
+        stroke_width.setValue(0)
         form.addRow("Text:", text_edit)
         form.addRow("Duration (s):", dur_spin)
         form.addRow("Font Size:", size_spin)
+        form.addRow("Text Color:", color_edit)
         form.addRow("Font:", font_combo)
+        form.addRow("Align:", align_combo)
+        form.addRow("Vertical Align:", valign_combo)
+        form.addRow("Method:", method_combo)
+        form.addRow("Background:", bg_edit)
+        form.addRow("Stroke Color:", stroke_color)
+        form.addRow("Stroke Width:", stroke_width)
         layout.addLayout(form)
 
         buttons = QtWidgets.QDialogButtonBox(
@@ -175,9 +197,14 @@ class EditorProjectMixin:
             clip_type="text",
             text=text,
             text_size=int(size_spin.value()),
-            text_color="#FFFFFF",
+            text_color=str(color_edit.text().strip() or "#FFFFFF"),
             text_font=str(font_combo.currentData() or ""),
-            bg_color="transparent",
+            text_method=str(method_combo.currentText()),
+            text_align=str(align_combo.currentText()),
+            text_v_align=str(valign_combo.currentText()),
+            text_stroke_color=str(stroke_color.text().strip() or "#000000"),
+            text_stroke_width=int(stroke_width.value()),
+            bg_color=str(bg_edit.text().strip() or "transparent"),
         )
         self.clips.append(c)
         gi = self.scene.add_clip_item(c)
@@ -301,6 +328,11 @@ class EditorProjectMixin:
                 text_size=int(text_size),
                 text_color="#FFFFFF",
                 text_font=default_font,
+                text_method="caption",
+                text_align="center",
+                text_v_align="center",
+                text_stroke_color="#000000",
+                text_stroke_width=0,
                 bg_color="transparent",
             )
             created.append(c)
@@ -332,7 +364,7 @@ class EditorProjectMixin:
         form = QtWidgets.QFormLayout()
         model_combo = QtWidgets.QComboBox()
         model_combo.addItems(["tiny", "base", "small", "medium", "large"])
-        model_combo.setCurrentText("small")
+        model_combo.setCurrentText("medium")
         lang_combo = QtWidgets.QComboBox()
         lang_combo.setEditable(True)
         lang_combo.addItems(["Auto", "en", "de", "es", "fr", "it", "pt", "ja", "zh"])
@@ -366,7 +398,7 @@ class EditorProjectMixin:
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
-        model_name = model_combo.currentText().strip() or "small"
+        model_name = model_combo.currentText().strip() or "medium"
         lang_text = lang_combo.currentText().strip()
         language = None if lang_text.lower() in {"auto", ""} else lang_text
         font_size = int(size_spin.value())

@@ -73,7 +73,11 @@ class EditorSelectionMixin:
 
     def _thumb_key(self, clip: ClipItem) -> str:
         if clip.is_text():
-            return f"text|{clip.text}|{clip.text_size}|{clip.text_color}|{clip.bg_color}|{clip.text_font}"
+            return (
+                f"text|{clip.text}|{clip.text_size}|{clip.text_color}|{clip.bg_color}|"
+                f"{clip.text_font}|{clip.text_method}|{clip.text_align}|{clip.text_v_align}|"
+                f"{clip.text_stroke_color}|{clip.text_stroke_width}"
+            )
         return f"{clip.path}|{clip.trim_in:.3f}"
 
     def _placeholder_thumbnail(self) -> QtGui.QPixmap:
@@ -115,6 +119,11 @@ class EditorSelectionMixin:
                 bg_color=clip.bg_color,
                 text_color=clip.text_color,
                 font_path=getattr(clip, "text_font", ""),
+                text_align=getattr(clip, "text_align", "center"),
+                text_v_align=getattr(clip, "text_v_align", "center"),
+                stroke_color=getattr(clip, "text_stroke_color", "#000000"),
+                stroke_width=getattr(clip, "text_stroke_width", 0),
+                method=getattr(clip, "text_method", "caption"),
                 font_size=max(10, int(clip.text_size * 0.45)),
             )
             return QtGui.QPixmap.fromImage(img)
@@ -255,6 +264,20 @@ class EditorSelectionMixin:
             c.text_size = int(self.spin_text_size.value())
         if hasattr(self, "combo_text_font"):
             c.text_font = str(self.combo_text_font.currentData() or "")
+        if hasattr(self, "combo_text_align"):
+            c.text_align = str(self.combo_text_align.currentText())
+        if hasattr(self, "combo_text_valign"):
+            c.text_v_align = str(self.combo_text_valign.currentText())
+        if hasattr(self, "combo_text_method"):
+            c.text_method = str(self.combo_text_method.currentText())
+        if hasattr(self, "edit_text_color"):
+            c.text_color = str(self.edit_text_color.text().strip() or "#FFFFFF")
+        if hasattr(self, "edit_text_bg"):
+            c.bg_color = str(self.edit_text_bg.text().strip() or "transparent")
+        if hasattr(self, "edit_text_stroke"):
+            c.text_stroke_color = str(self.edit_text_stroke.text().strip() or "#000000")
+        if hasattr(self, "spin_text_stroke"):
+            c.text_stroke_width = int(self.spin_text_stroke.value())
         gi = self.graphics_by_clip.get(self._gi_key(c))
         if gi:
             gi._refresh_label()
@@ -330,6 +353,20 @@ class EditorSelectionMixin:
         self.spin_text_size.setEnabled(is_text)
         if hasattr(self, "combo_text_font"):
             self.combo_text_font.setEnabled(is_text)
+        if hasattr(self, "combo_text_align"):
+            self.combo_text_align.setEnabled(is_text)
+        if hasattr(self, "combo_text_valign"):
+            self.combo_text_valign.setEnabled(is_text)
+        if hasattr(self, "combo_text_method"):
+            self.combo_text_method.setEnabled(is_text)
+        if hasattr(self, "edit_text_color"):
+            self.edit_text_color.setEnabled(is_text)
+        if hasattr(self, "edit_text_bg"):
+            self.edit_text_bg.setEnabled(is_text)
+        if hasattr(self, "edit_text_stroke"):
+            self.edit_text_stroke.setEnabled(is_text)
+        if hasattr(self, "spin_text_stroke"):
+            self.spin_text_stroke.setEnabled(is_text)
         self.btn_apply_text.setEnabled(is_text)
         if is_text:
             self.text_edit.blockSignals(True)
@@ -346,6 +383,34 @@ class EditorSelectionMixin:
                     idx = 0
                 self.combo_text_font.setCurrentIndex(idx)
                 self.combo_text_font.blockSignals(False)
+            if hasattr(self, "combo_text_align"):
+                self.combo_text_align.blockSignals(True)
+                self.combo_text_align.setCurrentText(getattr(clip, "text_align", "center"))
+                self.combo_text_align.blockSignals(False)
+            if hasattr(self, "combo_text_valign"):
+                self.combo_text_valign.blockSignals(True)
+                self.combo_text_valign.setCurrentText(getattr(clip, "text_v_align", "center"))
+                self.combo_text_valign.blockSignals(False)
+            if hasattr(self, "combo_text_method"):
+                self.combo_text_method.blockSignals(True)
+                self.combo_text_method.setCurrentText(getattr(clip, "text_method", "caption"))
+                self.combo_text_method.blockSignals(False)
+            if hasattr(self, "edit_text_color"):
+                self.edit_text_color.blockSignals(True)
+                self.edit_text_color.setText(getattr(clip, "text_color", "#FFFFFF"))
+                self.edit_text_color.blockSignals(False)
+            if hasattr(self, "edit_text_bg"):
+                self.edit_text_bg.blockSignals(True)
+                self.edit_text_bg.setText(getattr(clip, "bg_color", "transparent"))
+                self.edit_text_bg.blockSignals(False)
+            if hasattr(self, "edit_text_stroke"):
+                self.edit_text_stroke.blockSignals(True)
+                self.edit_text_stroke.setText(getattr(clip, "text_stroke_color", "#000000"))
+                self.edit_text_stroke.blockSignals(False)
+            if hasattr(self, "spin_text_stroke"):
+                self.spin_text_stroke.blockSignals(True)
+                self.spin_text_stroke.setValue(int(getattr(clip, "text_stroke_width", 0)))
+                self.spin_text_stroke.blockSignals(False)
         else:
             self.text_edit.blockSignals(True)
             self.text_edit.setPlainText("")
@@ -357,3 +422,31 @@ class EditorSelectionMixin:
                 self.combo_text_font.blockSignals(True)
                 self.combo_text_font.setCurrentIndex(0)
                 self.combo_text_font.blockSignals(False)
+            if hasattr(self, "combo_text_align"):
+                self.combo_text_align.blockSignals(True)
+                self.combo_text_align.setCurrentText("center")
+                self.combo_text_align.blockSignals(False)
+            if hasattr(self, "combo_text_valign"):
+                self.combo_text_valign.blockSignals(True)
+                self.combo_text_valign.setCurrentText("center")
+                self.combo_text_valign.blockSignals(False)
+            if hasattr(self, "combo_text_method"):
+                self.combo_text_method.blockSignals(True)
+                self.combo_text_method.setCurrentText("caption")
+                self.combo_text_method.blockSignals(False)
+            if hasattr(self, "edit_text_color"):
+                self.edit_text_color.blockSignals(True)
+                self.edit_text_color.setText("#FFFFFF")
+                self.edit_text_color.blockSignals(False)
+            if hasattr(self, "edit_text_bg"):
+                self.edit_text_bg.blockSignals(True)
+                self.edit_text_bg.setText("transparent")
+                self.edit_text_bg.blockSignals(False)
+            if hasattr(self, "edit_text_stroke"):
+                self.edit_text_stroke.blockSignals(True)
+                self.edit_text_stroke.setText("#000000")
+                self.edit_text_stroke.blockSignals(False)
+            if hasattr(self, "spin_text_stroke"):
+                self.spin_text_stroke.blockSignals(True)
+                self.spin_text_stroke.setValue(0)
+                self.spin_text_stroke.blockSignals(False)

@@ -37,6 +37,10 @@ class EditorExportMixin:
             return
 
         out = self.out_path.text().strip() or "simpledit-export.mp4"
+        try:
+            print(f"[render] settings={self.render_settings}")
+        except Exception:
+            pass
 
         if getattr(self, "_export_thread", None) is not None:
             try:
@@ -131,8 +135,23 @@ class EditorExportMixin:
                     except Exception:
                         pass
 
+                    cache = getattr(self._parent, "_export_clip_cache", None) or {}
+                    for _p, _clip in cache.items():
+                        try:
+                            _clip.close()
+                        except Exception:
+                            pass
+                    self._parent._export_clip_cache = None
+
                     self.finished.emit(self._out_path)
                 except Exception as exc:
+                    cache = getattr(self._parent, "_export_clip_cache", None) or {}
+                    for _p, _clip in cache.items():
+                        try:
+                            _clip.close()
+                        except Exception:
+                            pass
+                    self._parent._export_clip_cache = None
                     self.failed.emit(str(exc))
 
         self._export_thread = QtCore.QThread(self)
@@ -239,6 +258,7 @@ class EditorExportMixin:
         base_size = (1280, 720)
         if settings["resolution"] != "Auto":
             base_size = self._target_resolution(settings["resolution"])
+        clip_cache: dict[str, VideoFileClip] = {}
         text_cache: dict[tuple, "np.ndarray"] = {}
         text_mode = settings.get("text_render", "TextClip (Pillow)")
         if not clips:
@@ -263,7 +283,10 @@ class EditorExportMixin:
                 if c.is_text():
                     base = self._clip_below_video_at_time(t_mid, c.layer)
                     if base:
-                        base_clip = VideoFileClip(base.path)
+                        base_clip = clip_cache.get(base.path)
+                        if base_clip is None:
+                            base_clip = VideoFileClip(base.path)
+                            clip_cache[base.path] = base_clip
                         base_local_start = base.trim_in + (t0 - base.start_time)
                         base_local_end = base_local_start + (t1 - t0)
                         base_sub = make_subclip(base_clip, base_local_start, base_local_end)
@@ -281,16 +304,42 @@ class EditorExportMixin:
                             c.text_color,
                             c.bg_color,
                             getattr(c, "text_font", ""),
+                            getattr(c, "text_method", "caption"),
+                            getattr(c, "text_align", "center"),
+                            getattr(c, "text_v_align", "center"),
+                            getattr(c, "text_stroke_color", "#000000"),
+                            getattr(c, "text_stroke_width", 0),
                         )
                         arr = text_cache.get(cache_key)
                         if arr is None:
+                            if text_mode == "Pre-render PNG (Qt)":
+                                pad = max(4, int(c.text_size * 0.2))
+                                target_w = min(overlay_w, max(1, overlay_w))
+                                target_h = min(overlay_h, max(1, overlay_h))
+                                if str(getattr(c, "text_method", "caption")).lower() == "label":
+                                    try:
+                                        from PySide6 import QtGui
+                                        from text_render import _font_family_for_path
+                                        family = _font_family_for_path(getattr(c, "text_font", ""), "SF Pro Display")
+                                        font = QtGui.QFont(family, max(10, int(c.text_size)))
+                                        metrics = QtGui.QFontMetrics(font)
+                                        bounds = metrics.boundingRect(c.text or "")
+                                        target_w = min(overlay_w, max(1, bounds.width() + pad * 2))
+                                        target_h = min(overlay_h, max(1, bounds.height() + pad * 2))
+                                    except Exception:
+                                        pass
                             img = render_text_qimage(
                                 c.text,
-                                overlay_w,
-                                overlay_h,
+                                target_w,
+                                target_h,
                                 bg_color=c.bg_color,
                                 text_color=c.text_color,
                                 font_path=getattr(c, "text_font", ""),
+                                text_align=getattr(c, "text_align", "center"),
+                                text_v_align=getattr(c, "text_v_align", "center"),
+                                stroke_color=getattr(c, "text_stroke_color", "#000000"),
+                                stroke_width=getattr(c, "text_stroke_width", 0),
+                                method=getattr(c, "text_method", "caption"),
                                 font_size=c.text_size,
                             )
                             arr = qimage_to_rgba_array(img)
@@ -299,23 +348,102 @@ class EditorExportMixin:
                     else:
                         bg = None if str(c.bg_color).lower() in {"transparent", "none", ""} else c.bg_color
                         font_path = getattr(c, "text_font", "") or None
-                        text_sub = TextClip(
-                            text=c.text or "",
-                            font_size=int(c.text_size * 2),
-                            color=str(c.text_color or "#FFFFFF"),
-                            size=(int(overlay_w), int(overlay_h)),
-                            method="caption",
-                            text_align="center",
-                            horizontal_align="center",
-                            vertical_align="center",
+                        if text_mode == "TextClip (tight box)":
+                            cache_key = (
+                                "tight",
+                                c.text,
+                                c.text_size,
+                                c.text_color,
+                                c.bg_color,
+                                getattr(c, "text_font", ""),
+                                getattr(c, "text_method", "caption"),
+                                getattr(c, "text_align", "center"),
+                                getattr(c, "text_v_align", "center"),
+                                getattr(c, "text_stroke_color", "#000000"),
+                                getattr(c, "text_stroke_width", 0),
+                            )
+                            size_entry = text_cache.get(cache_key)
+                            if size_entry is None:
+                                try:
+                                    measure = TextClip(
+                                        text=c.text or "",
+                                        font_size=int(c.text_size * 2),
+                                        color=str(c.text_color or "#FFFFFF"),
+                                        method="label",
+                                        text_align=str(getattr(c, "text_align", "center")),
+                                        horizontal_align=str(getattr(c, "text_align", "center")),
+                                        vertical_align=str(getattr(c, "text_v_align", "center")),
+                                        font=font_path,
+                                        bg_color=bg,
+                                        stroke_color=str(getattr(c, "text_stroke_color", "#000000")),
+                                        stroke_width=int(getattr(c, "text_stroke_width", 0)),
+                                    )
+                                    size_entry = (int(measure.w), int(measure.h))
+                                finally:
+                                    try:
+                                        measure.close()
+                                    except Exception:
+                                        pass
+                                text_cache[cache_key] = size_entry
+                            w, h = size_entry
+                            pad = max(4, int(c.text_size * 0.2))
+                            w = int(min(overlay_w, w + pad * 2))
+                            h = int(min(overlay_h, h + pad * 2))
+                            text_kwargs = dict(
+                                text=c.text or "",
+                                font_size=int(c.text_size * 2),
+                                color=str(c.text_color or "#FFFFFF"),
+                                method="label",
+                                text_align=str(getattr(c, "text_align", "center")),
+                                horizontal_align=str(getattr(c, "text_align", "center")),
+                                vertical_align=str(getattr(c, "text_v_align", "center")),
+                                font=font_path,
+                                bg_color=bg,
+                                stroke_color=str(getattr(c, "text_stroke_color", "#000000")),
+                                stroke_width=int(getattr(c, "text_stroke_width", 0)),
+                                size=(w, h),
+                            )
+                            text_sub = TextClip(**text_kwargs)
+                            hpos = str(getattr(c, "text_align", "center"))
+                            vpos = str(getattr(c, "text_v_align", "center"))
+                            if hpos == "left":
+                                x = 0
+                            elif hpos == "right":
+                                x = int(overlay_w - w)
+                            else:
+                                x = int((overlay_w - w) * 0.5)
+                            if vpos == "top":
+                                y = 0
+                            elif vpos == "bottom":
+                                y = int(overlay_h - h)
+                            else:
+                                y = int((overlay_h - h) * 0.5)
+                                y -= max(1, int(c.text_size * 0.4))
+                            text_sub = text_sub.with_position((x, y))
+                        else:
+                            text_kwargs = dict(
+                                text=c.text or "",
+                                font_size=int(c.text_size * 2),
+                                color=str(c.text_color or "#FFFFFF"),
+                            method=str(getattr(c, "text_method", "caption")),
+                            text_align=str(getattr(c, "text_align", "center")),
+                            horizontal_align=str(getattr(c, "text_align", "center")),
+                            vertical_align=str(getattr(c, "text_v_align", "center")),
                             font=font_path,
                             bg_color=bg,
-                        )
+                                stroke_color=str(getattr(c, "text_stroke_color", "#000000")),
+                                stroke_width=int(getattr(c, "text_stroke_width", 0)),
+                            )
+                            text_kwargs["size"] = (int(overlay_w), int(overlay_h))
+                            text_sub = TextClip(**text_kwargs)
                     text_sub = set_duration_compat(text_sub, t1 - t0)
                     sub = CompositeVideoClip([base_sub, text_sub], size=(overlay_w, overlay_h))
                     sub = set_duration_compat(sub, t1 - t0)
                 else:
-                    base = VideoFileClip(c.path)
+                    base = clip_cache.get(c.path)
+                    if base is None:
+                        base = VideoFileClip(c.path)
+                        clip_cache[c.path] = base
                     local_start = c.trim_in + (t0 - c.start_time)
                     local_end = local_start + (t1 - t0)
                     sub = make_subclip(base, local_start, local_end)
@@ -350,4 +478,5 @@ class EditorExportMixin:
             target_w, target_h = self._target_resolution(settings["resolution"])
             video = video.resized(new_size=(target_w, target_h))
 
+        self._export_clip_cache = clip_cache
         return video

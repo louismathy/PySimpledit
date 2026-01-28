@@ -283,6 +283,11 @@ class EditorPlaybackMixin:
             bg_color=clip.bg_color,
             text_color=clip.text_color,
             font_path=getattr(clip, "text_font", ""),
+            text_align=getattr(clip, "text_align", "center"),
+            text_v_align=getattr(clip, "text_v_align", "center"),
+            stroke_color=getattr(clip, "text_stroke_color", "#000000"),
+            stroke_width=getattr(clip, "text_stroke_width", 0),
+            method=getattr(clip, "text_method", "caption"),
             font_size=font_size,
         )
         self._on_frame_ready(img)
@@ -335,6 +340,11 @@ class EditorPlaybackMixin:
             bg_color=clip.bg_color,
             text_color=clip.text_color,
             font_path=getattr(clip, "text_font", ""),
+            text_align=getattr(clip, "text_align", "center"),
+            text_v_align=getattr(clip, "text_v_align", "center"),
+            stroke_color=getattr(clip, "text_stroke_color", "#000000"),
+            stroke_width=getattr(clip, "text_stroke_width", 0),
+            method=getattr(clip, "text_method", "caption"),
             font_size=font_size,
         )
         out = QtGui.QImage(base)

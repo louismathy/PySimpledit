@@ -38,7 +38,7 @@ class RenderSettingsDialog(QtWidgets.QDialog):
         layout.addRow("Audio bitrate:", self.combo_audio)
 
         self.combo_text = QtWidgets.QComboBox()
-        self.combo_text.addItems(["TextClip (Pillow)", "Pre-render PNG (Qt)"])
+        self.combo_text.addItems(["TextClip (Pillow)", "TextClip (tight box)", "Pre-render PNG (Qt)"])
         self.combo_text.setCurrentText("TextClip (Pillow)")
         layout.addRow("Text render:", self.combo_text)
 

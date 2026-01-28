@@ -28,6 +28,11 @@ class ClipItem:
     text_size: int = 64
     text_color: str = "#FFFFFF"
     text_font: str = ""
+    text_method: str = "caption"
+    text_align: str = "center"
+    text_v_align: str = "center"
+    text_stroke_color: str = "#000000"
+    text_stroke_width: int = 0
     bg_color: str = "transparent"
 
     def is_text(self) -> bool:
