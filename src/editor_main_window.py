@@ -50,6 +50,7 @@ class EditorMainWindow(
             "codec": "libx264 (H.264)",
             "preset": "medium",
             "audio_bitrate": "192k",
+            "text_render": "TextClip (Pillow)",
         }
 
         self._icons: dict[str, QtGui.QIcon] = {}

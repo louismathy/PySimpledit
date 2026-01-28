@@ -37,6 +37,11 @@ class RenderSettingsDialog(QtWidgets.QDialog):
         self.combo_audio.setCurrentText("192k")
         layout.addRow("Audio bitrate:", self.combo_audio)
 
+        self.combo_text = QtWidgets.QComboBox()
+        self.combo_text.addItems(["TextClip (Pillow)", "Pre-render PNG (Qt)"])
+        self.combo_text.setCurrentText("TextClip (Pillow)")
+        layout.addRow("Text render:", self.combo_text)
+
                  
         btns = QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         self.buttonBox = QtWidgets.QDialogButtonBox(btns)
@@ -51,4 +56,5 @@ class RenderSettingsDialog(QtWidgets.QDialog):
             "codec": self.combo_codec.currentText(),
             "preset": self.combo_preset.currentText(),
             "audio_bitrate": self.combo_audio.currentText(),
+            "text_render": self.combo_text.currentText(),
         }
